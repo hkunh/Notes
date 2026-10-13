@@ -1,0 +1,1064 @@
+dmesg | grep -i imx415 #dmesg 负责打印 Linux 内核的启动日志和硬件缓冲区消息；grep -i 是不区分大小写去搜“imx415”这个关键词。
+media-ctl -p -d /dev/media0 #media-ctl 是媒体控制器工具；-p 代表打印（print）拓扑结构；-d 指定媒体设备节点
+v4l2-ctl --list-devices
+v4l2-ctl --list-formats-ext -d /dev/video0 #--list-formats-ext 意思是列出某个节点支持的所有视频格式、分辨率、帧率的详细扩展信息。
+
+export RK_TOOLCHAIN=~/xuexi/rk3568/sdk/rk3568_linux_sdk/buildroot/output/rockchip_rk3568/host
+export RK_SYSROOT=~/xuexi/rk3568/sysroot/rk3568-buildroot
+
+mkdir -p "$RK_SYSROOT"
+
+adb pull /lib "$RK_SYSROOT/lib"
+adb pull /lib64 "$RK_SYSROOT/lib64"
+adb pull /usr "$RK_SYSROOT/usr"
+adb pull /oem "$RK_SYSROOT/oem"
+adb pull /vendor "$RK_SYSROOT/vendor"
+adb pull /rockchip_test "$RK_SYSROOT/rockchip_test"
+
+source scripts/env_rk3568.sh
+./scripts/build_board.sh
+./scripts/deploy_adb.sh
+
+版本		目标					输出
+v0.1	环境和部署闭环			host/board 编译运行、ADB 部署
+v0.2	V4L2 查询			打印 video 节点能力
+v0.3	V4L2 采集			保存 raw/yuv，统计 FPS
+v0.4	V4L2VideoSource		模块化采集
+v0.5	简单 pipeline		采集线程 + 队列 + 消费线程
+v0.6	RGA 处理				resize/format convert
+v0.7	MPP 编码				输出 H.264/H.265
+v0.8	录像					分段保存裸流
+v0.9	RTSP				VLC 实时播放
+v1.0	音频					ALSA PCM 采集
+v1.1	AAC/MP4				音视频 mux
+v1.2	显示					HDMI/MIPI预览
+v1.3	UI					LVGL/Qt 控制界面
+v1.4	AI					RKNN 检测叠框
+v2.0	完整相机系统			拍照、录像、回放、推流、UI
+
+sudo systemctl set-default multi-user.target 把系统默认的启动级别改为多用户命令行模式
+sudo systemctl set-default graphical.target	 把系统的默认启动目标改回图形界面
+
+# 查结构体定义
+grep -rn "struct v4l2_capability {" /usr/include/linux/
+# 直接用 VS Code 强行打开这个系统头文件查看
+code /usr/include/linux/videodev2.h
+
+https://elixir.bootlin.com/linux/v7.0.10/A/ident/v4l2_capability 神器网站
+
+Accessibility > Signals: Line Has Inline Suggestion 关闭行结束提示音
+Accessibility > Signals: Progress 关闭程序运行结束提示音
+
+小驼峰命名法（lowerCamelCase）
+特点：首字母小写，后续单词首字母大写。
+用途：在这段代码中被统一规范地用作 C++ 函数名 和 局部逻辑变量。
+
+大驼峰命名法 / 帕斯卡命名法（PascalCase）
+特点：每一个单词的首字母都大写（包括第一个单词）。
+用途：在这段代码中用于 自定义的结构体（Struct）或类名，比如 struct V4L2Context、Options& opt、Buffer。
+
+蛇形命名法（snake_case）
+特点：单词全部小写，中间用下划线 _ 连接。
+用途：这是 Linux 内核原生的 C 语言标准风格。在代码中调用 V4L2 原生结构体时出现，比如 v4l2_buf_type，或者你定义的成员变量 info_only。
+注：如果是全大写加下划线（如 V4L2_BUF_TYPE_VIDEO_CAPTURE），则属于大写蛇形命名法（SCREAMING_SNAKE_CASE），专用于常量和宏定义。
+
+
+单平面:在单平面模式下，不管一个像素格式包含多少个分量（Y、U、V），内核在内存中只为这一帧画面申请一块连续的内存缓冲区（Buffer）。Y 数据和 UV 数据像连续的紧密编队一样，前后紧挨着排在同一个内存块里。
+多平面：在多平面模式下，内核可以为这一帧画面的不同分量申请独立的、不连续的内存缓冲区（Planes）。例如，Y 数据存放在内存的高端地址，UV 数据存放在内存的低端地址，它们在物理内存上可以是完全割裂的。
+
+一个摄像头硬件会同时生成好几个设备节点（比如 /dev/video11、/dev/video12） 如/dev/video11：只负责出图像（支持 VIDEO_CAPTURE）/dev/video12：只负责调色/参数控制（不支持抓图）。
+
+
+一、 内核怎么知道你要多大的空间？你会有这个疑问，是因为误以为内存是在 mmap 这一步才决定大小的。其实不然，内核早在你调用 mmap 之前，就已经通过你之前执行的两步操作，把账目算得死死的了。请看这个标准流水线的时间线：第一步：你调用 VIDIOC_S_FMT（设置格式）也就是我们前几步聊的代码。你把 width=1920, height=1080, format=NV12 传给了驱动。内核的操作：驱动在内核结构体里记录下：“这个设备接下来要运行在 1920x1080 NV12 模式下。” 同时，驱动在内核里精算出了 sizeimage（比如大约 3MB）。此时状态：内核记住了数字，但还没有真正拨付物理内存。第二步：你调用 VIDIOC_REQBUFS（申请缓冲区）注意看你刚发给我的 initMmap 函数的第一行：C++v4l2_requestbuffers req {};
+req.count = buffer_count; // 比如你传入了 4
+req.type = ctx.type;
+req.memory = V4L2_MEMORY_MMAP;
+xioctl(ctx.fd, VIDIOC_REQBUFS, &req); // 👈 就在这一瞬间，内核动手了！
+内核的操作：当内核收到 VIDIOC_REQBUFS 命令，并看到你要求 count = 4 时，它会立刻翻开刚才第一步记下的小本本：“哦，当前格式每帧需要 3MB。用户现在要 4 个缓冲区。
+”真正的申请：内核转头对系统的内存管理器（如瑞芯微的 CMA 连续内存分配器）说：“给我紧急拨付 3MB * 4 = 12MB 的物理连续内存！”
+此时，这 4 块内存（Index 0, 1, 2, 3）在内核空间里就已经真实存在且分配完毕了。第三步：你调用 mmap既然内核在第二步已经把 12MB 的物理内存申请好了，为什么还要 mmap？
+因为你的用户态程序此时根本不知道这 4 块内存在物理内存的哪个角落。你调用 mmap，并传入 buf.m.offset（内核给你的物理内存偏移量代号），内核就会把你的虚拟指针和这块已经存在的内核内存绑定。
+所以，内核不是神仙，它是根据你前两步递交的申请表（格式 + 数量），在 VIDIOC_REQBUFS 时把空间准备好的。
+二、 既然 MMAP 最好，为什么还要 USERPTR 和 DMABUF？存在即合理。
+V4L2 作为一个通用的 Linux 视频框架，它不仅要照顾瑞芯微这种嵌入式板子，还要照顾 PC 机、服务器、智能电视等各种奇葩场景。
+这三种模式分别代表了三种截然不同的业务控制权：
+1. V4L2_MEMORY_USERPTR（用户指针模式）控制权在谁：
+	上层应用程序。为什么存在：假设你在开发一个极其庞大的多媒体播放/录制系统（比如 FFmpeg 或者是某些大型音视频监控中间件）。
+	这个系统本身就自带了一套极其完美的、复杂的内存管理池（已经用 malloc 或 new 申请了 500MB 内存）。
+	如果用 MMAP，系统就必须把数据从 V4L2 的内核 Buffer 中 memcpy 拷贝到自己的内存池里，这在高清视频流下会疯狂榨干 CPU 带宽。
+	用 USERPTR，程序可以直接对 V4L2 说：“老哥，别自己建 Buffer 了，用我内存池里的指针吧，你让摄像头硬件把数据直接灌到我的大数组里！”
+	为什么嵌入式不常用：它对硬件要求极高。PC 机的 CPU 拥有强大的 IOMMU（输入输出内存管理单元），支持 Scatter-Gather（分散-聚集）DMA。
+	这意味着即便你的大数组在物理上碎成了几百块，PC 的硬件也能一片一片拼起来灌进去。
+	但嵌入式芯片（如 RK3568）的 ISP 硬件往往比较死板，必须要求绝对物理连续，所以 USERPTR 在嵌入式平台极易承载失败。
+2. V4L2_MEMORY_DMABUF（零拷贝的终极王者）控制权在谁：第三方底层硬件驱动。
+   为什么存在：在现代嵌入式设备中，摄像头数据拿回来绝对不仅仅是为了“看一眼”，通常有更硬核的去处。
+   比如：传给 NPU 跑深度学习模型（如 YOLO/RT-DETR），或者传给 GPU 做 3D 渲染，亦或是传给 VPU 做 H.264 硬件编码。
+   如果用 MMAP：V4L2 驱动申请了内存，mmap 到用户空间。用户空间拿到指针，调用 NPU 的 API。NPU 驱动又把这个指针的数据拷贝到 NPU 自己的显存里。
+   这中间依然发生了一次 CPU 拷贝。如果用 DMABUF：Rockchip 的 DRM（显卡/显示驱动）或者 ION（通用内存管理器）在系统启动时申请了一块硬件通用的物理内存。
+   它会把这块内存打包成一个文件描述符（fd）。应用层拿着这个 fd 传给 V4L2：“这是显卡大哥的内存句柄，你直接把摄像头数据灌进显卡显存里！”
+   抓完图后，应用层再拿着同一个 fd 传给 NPU：“这是刚才灌了摄像头数据的显存，你直接读它跑推理！”整个过程中，图像数据在显存/物理连续内存里一动不动，ISP 灌入，NPU 直接读，
+   创造了神话般的“零拷贝（Zero-Copy）”性能
+   
+#-------------------------------------------------------------------------------------------------------------------------------#   
+ioctl 没权力动你的“户口本”（页表）
+你可能会说：“那内核在底层帮我把这块物理内存转换成用户态能用的虚拟地址，然后填给 buf 不就行了吗？”
+对不起，ioctl 跨界了，它没这个权力。
+在 Linux 里，一个进程能看到哪些虚拟内存，是由这个进程的页表（Page Table）决定的。
+ioctl 的本职工作：只是一个单纯的“传话筒”。负责在用户态和内核态之间拷贝结构体数据（把内核的账单数据复制到你的 v4l2_buffer 结构体里）。
+它根本没有权限去修改你进程的页表，也就无法在你的进程里凭空创造出一块新的虚拟内存地址。
+mmap 的特权：作为专门负责内存映射的特权系统调用，内核中只有 mmap 相关的核心代码，才有权力去修改你当前进程的内核控制块（mm_struct）和页表。
+它会在你进程的虚拟内存空间里划出一块合法的、空白的道场，然后把这块虚拟地址和摄像头的物理内存连接起来。
+🎯 认清 buf.m.offset 的真实身份：它不是地址，它只是个“提货券”
+既然内核不能在 QUERYBUF 时直接给你地址，那它填在 buf.m.offset 里的那串看似奇奇怪怪的数字到底是什么？
+在 V4L2_MEMORY_MMAP 模式下，这个 offset 根本不是一个物理内存偏移量，它是一个由内核生成的、全系统唯一的“提货券密码”（Cookie/Token）。
+整个闭环逻辑其实是这样的：
+VIDIOC_QUERYBUF：你向内核打听 0 号 Buffer。内核说：“具体的物理内存我已经准备好了，我给你生成了一张无记名提货券，密码是 0x50000000，我把它写在 buf.m.offset 里交给你。”
+mmap：你拿着这张写着 0x50000000 密码的提货券，找到了专管土地分配的 mmap 部门，并把摄像头设备的 fd 一并递过去。
+内核对暗号：mmap 顺着 fd 找到摄像头驱动，核对密码 0x50000000：“噢！确实是 0 号视频缓冲区的物理内存。”
+修桥铺路：mmap 在你的进程页表里画上一笔，为你量身定制并返回了一个用户态合法的虚拟地址指针（比如 0x7f8a9000）。
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+1. 用户程序中的内存，都是虚拟内存？
+绝对是的！100% 都是虚拟内存。
+这是现代操作系统（Linux、Windows、macOS）最伟大的发明之一。在你的 C/C++ 用户态程序里，你打印出来的任何指针地址（比如 0x7f8a9000），全都是虚拟地址。
+你的应用层程序，其实就像生活在内核为你编织的《黑客帝国》虚拟世界里。每个程序都以为自己独占了全系统所有的内存，可以从 0x00000000 一直用到 0xFFFFFFFF。
+但实际上，这只是一个幻觉，程序永远接触不到真正的物理内存条（RAM）。
+2. 是不是驱动中申请的内存，就是内核的物理内存？
+是的，驱动里申请的是真正的、物理的、甚至死死连续的内存。
+驱动程序运行在内核深处，它通过 kmalloc 或是专门针对摄像头的 CMA（连续内存分配器）去申请内存时，是直接跟底层的物理内存条（RAM）要空间的。
+特别是像摄像头、GPU、NPU 这种需要高速抓图和处理数据的硬件，驱动在内核里帮它们申请的，不仅是真实的物理内存，而且通常要求物理地址必须死死连续。
+因为只有物理上连续，摄像头的 DMA（直接内存存取）控制器才能像流水线一样，一气呵成地把海量图像数据灌进去，而不需要 CPU 中途插手。
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+你说得完全没错：如果一个进程申请了 400M，并且在运行过程中把这 400M 摸了个遍，而且这些数据它一直都要用，那么它确实会实打实地吃掉 400M 的物理内存。 你的逻辑无懈可击。
+那为什么操作系统依然能做到“让所有进程的虚拟内存相加，远远大于物理内存总量”呢？这就涉及到现代内核的另外两大王牌机制：时间上的“错峰复用”（Page Reclamation） 和 空间上的“共享白嫖”（Shared Memory）。
+1. 绝招一：时间上的“错峰复用”（内存回收与换出）
+你假设的前提是：“这 400M 数据一旦被摸过变成物理内存，就会永远霸占着位置。” 但实际上，内核是一个冷酷的“渣男”，只要你一偷懒，它就会把给你的物理内存无情剥夺。
+计算机科学中有一个著名的局部性原理（Principle of Locality）：一个程序在特定的几十毫秒内，往往只集中访问一小部分数据。
+假设你的 AI 算法进程一共要处理 400M 的视频帧数据：
+第 1 秒：你处理前 100M 的数据（把它们摸成了物理内存）。
+第 2 秒：你开始处理第 101M 到 200M 的数据。此时，前 100M 的数据在物理内存里躺着一动不动，变成了“冷数据”。
+第 3 秒：系统物理内存告急（比如用户突然打开了浏览器）。
+这时候，内核的页面回收机制（Page Reclamation） 启动了。内核会满世界巡逻，寻找谁的物理内存最近没被用过。它盯着你的进程说：“你前 100M 的物理内存都闲了 2 秒了，拿来吧你！”
+内核会怎么处理这 100M 被你摸过的物理内存？
+如果是匿名内存（如 malloc 出来的变量、堆栈）：内核把这 100M 物理内存里的数据，悄悄拷贝到速度较慢的硬盘里（Swap 交换分区），然后把这 100M 物理内存彻底清空，分给别人。同时，把你的页表字典里这 100M 的记录划掉，标记为“在硬盘里”。
+如果是文件映射内存（如读取的代码段、图片素材）：内核更狠，因为硬盘里本来就有这些文件，内核连拷贝都省了，直接把这 100M 物理内存清空回收。
+当你第 4 秒突然又想回过头读前 100M 的数据时，CPU 查页表发现变空了，再次触发“缺页异常”，内核再急匆匆地从硬盘里把数据读回到物理内存。
+这就是“物理内存小于 400M”的真相：在任意一个微秒的时间点，真正躺在物理内存条里的数据可能只有 50M。剩下的 350M 要么还没生出来（没写过），要么已经被内核强行“贬”到硬盘里去了。
+2. 绝招二：空间上的“共享白嫖”（多进程共享物理内存）
+再来看一个神奇的现象：在 Linux 系统里，你同时开了 10 个一模一样的 AI 推理进程。每个进程都申请了 400M 虚拟内存，总共就是 4000M（4G）。但系统可能只消耗了 500M 物理内存。
+这又是怎么做到的？
+在这 400M 的虚拟内存里，其实包含了：
+你的 C++ 编译出来的可执行代码（比如 50M）。
+系统底层通用的动态链接库（如 libc.so，libstdc++.so，甚至 PyTorch 的底层 C++ 库，总共可能 300M）。
+真正属于你这个进程特有的变量数据（可能只有 50M）。
+这些代码段和系统库是只读的。内核在分房时极其聪明：
+进程 A 启动，把 300M 的 PyTorch 底层库读进物理内存。
+进程 B 启动，也需要这 300M 的库。内核绝对不会在物理内存里再复制一份！
+内核直接在进程 B 的页表字典里写下一行：进程B的虚拟地址XXXX 👈对齐👉 进程A已经占用的那块物理内存。
+结果就是：10 个进程在自己的虚拟世界里，都觉得自己拥有这 300M 的库（总计 3G 虚拟内存）。但在物理内存条上，它只占用了 300M 的空间。大家都在合法地“白嫖”同一块物理内存。
+V4L2 驱动的 VIDIOC_REQBUFS 和 mmap：
+普通内存：活在内核的掌控下，随时面临着“被内核偷走扔进硬盘（Swap）”或者“被别人白嫖”的命运。
+V4L2 内存：你通过 mmap 映射的摄像头缓冲区，在内核里被打了 MLOCK（内存锁定） 标志。
+你强迫内核：“这 4 块内存，不准换出到硬盘！不准给别人共享！不准搞懒惰分配！只要我的程序不退出，这几块物理连续的内存条地皮，就必须死死锁给我的摄像头和算法！”
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+1. 关于页表：记录三种状态的“生死簿”
+页表确实既记录“阳间（RAM）”的地址，也记录“阴间（Swap/硬盘）”的地址。但它还有第三种状态——“查无此人”。
+在 Linux 内核里，页表的每一行叫做一个 PTE（Page Table Entry，页表项）。面对 CPU 传过来的虚拟指针，这个硬件表格通过 Present Bit（存在位） 以及有效性标记，完美划分出三种生存状态：
+状态一：Present = 1（人在阳间）
+代表数据正老老实实躺在物理内存条（RAM）里。PTE 后面的 50 多个位记录的就是真正的物理内存地址。MMU 查到它，直接一路绿灯放行。
+状态二：Present = 0 但有内容（人在阴间）
+代表这块数据之前被摸过，但因为内存告急，被内核踢到了硬盘里。内核玩了个“鸠占鹊巢”的魔术——把后面原本存物理地址的位清空，改写成该数据在硬盘 Swap 分区里的“文件偏移量/扇区号”。
+状态三：条目完全为空，或标记为“无效”（查无此人） ✨ （新添场景）
+代表这个虚拟指针对应的 PTE 里面一片空白（全零），或者被操作系统打上了“非法/无效”的标签。这意味着：这块虚拟内存既没有对应物理内存，也没有对应硬盘 Swap，它在物理世界上根本不存在！ 这种情况通常由两种原因引起：
+合法的“空头支票”：你刚调了 malloc(100M)，内核只给了你虚拟地址，还没来得及在页表里建映射。
+非法的“野指针”：你的代码写飞了，访问了一个根本不属于你进程的、或者早就被 free 释放掉的垃圾虚拟地址。
+
+2. 关于 MMU：它是“翻译官+保安”，也是“报警器”
+谁来生成虚拟指针？
+虚拟内存指针是由你的 C++ 代码（经由编译器编译后）以及 CPU 共同生成的。当你写下 int* p = &a;，运行程序时，CPU 的执行单元（ALU）就会发出指令：“我要去读 0x7f8a9000 这个地址的数据。”
+生成和发出虚拟指针的是 CPU/程序本身。
+MMU 到底是干嘛的？
+MMU（Memory Management Unit）是芯片上的一块纯硬件电路，死死挡在 CPU 和内存条中间。它的本职工作只有两个：翻译 和 安保。
+面对上述页表的三种状态，MMU 硬件在查表（翻译）时的底层反应截然不同：
+🔄 反应一：一路绿灯（对应状态一）
+MMU 极速去翻页表。一看 Present = 1，顺藤摸瓜瞬间把虚拟地址 0x7f8a9000 转换成物理地址 0x10A2000，发给内存条拿数据。
+🚨 反应二：硬件拉响警报（对应状态二 和 状态三）
+当 MMU 翻开页表，发现 Present = 0（人在阴间），或者发现页表项完全为空/无效（查无此人）时，作为纯硬件的 MMU 自己是无法解决的。它会立刻按下暂停键，向 CPU 丢出一个硬件中断——缺页异常（Page Fault）。
+这时候，Linux 内核（软件）紧急接管 CPU，过来充当法官，判决这块“找不到物理内存”的虚拟指针到底是无辜的还是犯罪的：
+判决 A（属于状态二：数据在 Swap 中）
+内核查看页表里的硬盘扇区号：“哦，是自己人，只是被贬到硬盘了。” 内核从硬盘捞回数据放入 RAM，把页表改成 Present = 1，让 MMU 重新翻译。
+判决 B（属于状态三下的合法情况：新申请的 malloc 内存）
+内核一查账本：“哦，这块虚拟地址确实是我刚发给他的 malloc 空头支票，他第一次来写数据。” 内核立刻从物理内存条里切出 4KB 空间，塞进这个原本为空的页表项里，改成 Present = 1。MMU 重新放行。
+判决 C（属于状态三下的非法情况：野指针/越界）
+内核盘问了半天，发现这个进程的账本里根本没有登记过这个虚拟地址：“大胆！账本里没这地址，页表也是空的，你竟敢拿个野指针来骗内存？！” 内核不再仁慈，直接给进程发送 SIGSEGV 信号，也就是程序员最怕的 Segmentation Fault（段错误），当场把你的程序枪毙。
+🛡️ 安全检查：安保拒绝（权限检查）
+多说一句，就算 MMU 在页表里找到了物理内存（Present = 1），它还会看一眼该行记录的“权限位”（只读/可写/可执行）。如果你尝试去写一个只读的虚拟地址（比如尝试修改代码段），MMU 同样会拉响警报，直接让内核用段错误（Segmentation Fault）把你杀掉。
+
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+那就是不同进程的虚拟内存可以是一样的？甚至可以说不同进程的虚拟内存可能都是相同的起点，范围差不多？
+在 Linux 系统里，每一个独立的进程，看到的虚拟内存世界几乎是一模一样的复刻版。它们不仅起点相同、范围相同，连内部的“排版布局”都大同小异。
+🗺️ 每个进程手里的“同款设计图”
+在 64 位的 Linux 系统中，不论是你的摄像头算法程序、QQ、还是一个简陋的 hello world，当它们启动时，内核都会为它们下发一张一模一样的虚拟内存空间设计图。
+它们的起点和范围差不多是这样的（以经典的 Linux 64位布局为例）：
+最底部（低地址，比如 0x00400000 往上）：固定用来存放这个进程自己的代码段（Text）和全局变量。
+紧接着往上：是堆区（Heap），也就是你调用 malloc 或 new 时，二房东帮你往高地址扩建的地方。
+中间庞大的黄金地带（一般在 0x7F... 开头的地方）：是内存映射区（Memory Mapping Segment）。你写的 V4L2 mmap 映射出来的摄像头缓冲区、系统的动态链接库（.so 文件），全部扎堆驻扎在这里。
+再往上（高地址附近）：是栈区（Stack）。局部变量就在这里，它比较个性，是往低地址方向倒着长的。
+最顶端（特权禁区）：是内核空间。所有进程的这张设计图的头顶上，都顶着同一片内核高地（用户态无法访问）。
+所以，你完全可以说：进程 A 的世界里有一个 0x7f8a9000，进程 B 的世界里也绝对可以有一个一模一样的 0x7f8a9000。它们甚至连在这个地址上存放的东西类型（比如都是 mmap 出来的内存）都一样。
+🧙‍♂️ 撞衫不可怕：谁在幕后阻止“火星撞地球”？
+既然大家都用同一套虚拟地址，范围也一样，CPU 运行的时候难道不会搞混，把进程 A 的数据写到进程 B 里去吗？
+答案你其实已经知道了——因为每个进程都有自己专属的“活字典”（独立的页表）。
+当操作系统的调度器决定让 CPU 暂停运行进程 A，转去运行进程 B 时（这叫上下文切换），内核会顺手做一个动作：把 CPU 内部的页表根路径寄存器（在 x86 芯片上叫 CR3 寄存器）的值，一屁股改写成进程 B 的页表物理地址。
+这一改，整个世界的翻译规则瞬间就变了：
+前一微秒（运行进程 A 的算法）：
+CPU 发出指令：“我要往 0x7f8a9000 写数据。”
+MMU 翻开进程 A 的页表：“收到，对应的是物理内存条的第 100MB 处（摄像头的缓冲区）。”
+后一微秒（切换到进程 B 刷网页）：
+CPU 同样发出指令：“我要往 0x7f8a9000 写数据。”
+MMU 翻开进程 B 的页表：“收到，对应的是物理内存条的第 250MB 处（浏览器的缓存）。”
+它们虽然在虚拟世界里叫同一个名字（0x7f8a9000），但在物理世界中，被两条完全平行的铁轨导向了内存条上互不相干的角落。 它们永生永世都不会相遇，更不可能发生溢出强占。
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+内核空间也是用虚拟指针，具体来说是访问内存数据的时候。怎么理解“驱动申请的是物理地址”和“mmap 映射”呢？
+当你的摄像头驱动启动，要为视频流准备一块 4MB 的缓冲区时，它调用了内核的申请函数（比如 dma_alloc_coherent 或 kmalloc）。
+
+这时候，内核确实在物理内存条（RAM）上切下了 4MB 的连续生死地皮（假设这块地皮在物理内存条的 0x1000000 处）。
+
+但是，内核并没有只给驱动一个 0x1000000 就完事了。为了让全系统协同工作，内核给这块物理内存一口气发放了 3 张不同的“身份证”（分身）：
+
+身份证 1：硬件视角 —— 真实的物理地址（如 0x1000000）
+谁在用：摄像头硬件（ISP/DMA 控制器）。
+为什么：摄像头是个纯硬件，它不归 CPU 的 MMU 管，它是个“法外狂徒”。当它抓到一帧图像时，它必须顺着电路板上的铜线，把电信号直接灌进物理内存条的 0x1000000 处。
+	所以，驱动程序必须要知道这个物理地址，并在初始化摄像头时，通过寄存器告诉摄像头：“喂，待会儿抓到图，直接往物理地址 0x1000000 灌！”
+身份证 2：驱动视角 —— 内核虚拟地址（如 0xFFFF880001000000）
+谁在用：运行在内核态的摄像头驱动程序代码（CPU执行）。
+为什么：驱动程序是写在内核里的 C 代码，也是由 CPU 执行的。如果驱动想在内核里自己先瞅一眼这个 Buffer 里的数据（比如做个画质滤镜或者打印个日志），由于 CPU 只能认虚拟地址，
+	所以内核必须在内核页表里画一笔，把这块物理内存映射到高高在上的“内核虚拟地址空间”（通常是 0xFFFF... 开头）。
+身份证 3：应用视角 —— 用户虚拟地址（如 0x7F8A9000）
+谁在用：你的应用层算法程序（用户态）。
+为什么：这就是你提到的 mmap 派上用场的地方了！
+🎬 顺藤摸瓜：用户 mmap 是怎么调用到驱动 mmap 的？
+你记的非常准！用户态调用 mmap(..., fd, ...) 时，Linux 内核一查这个 fd 是摄像头设备的，就会一路向下调用，最终执行摄像头驱动里编写的 mmap 函数。
+那这个驱动里的 mmap 到底在干嘛呢？它的源码本质上只干了一件极其核心的事：
+C
+// 摄像头驱动内部的 mmap 伪代码
+int camera_mmap(struct file *filp, struct vm_area_struct *vma) {
+    // 1. 驱动手里握着之前申请好的【物理地址】 (假设叫 phys_addr)
+    unsigned long phys_addr = 0x1000000; 
+
+    // 2. 驱动调用内核的核心改页表函数，把这个【物理地址】
+    //    直接塞进当前【用户进程】的页表里！
+    remap_pfn_range(vma, vma->vm_start, phys_addr >> PAGE_SHIFT, ...);
+    
+    return 0;
+}
+这就是整个闭环的真相：
+用户调用 mmap：说“老哥，在我的用户虚拟空间里划一块地（比如 0x7F8A9000），我准备看视频”。
+内核带路，找到驱动的 mmap：驱动说：“太好了，我早就让摄像头把数据灌到物理地址 0x1000000 去了。内核老大，快用 remap_pfn_range 把用户刚才那个虚拟地址 0x7F8A9000 和我的物理地址 0x1000000 
+	绑定到用户进程的页表字典里！”
+🎯 终极复盘
+你看，这三个概念现在完美融合了：
+内核空间也是虚拟地址：没错！因为内核代码也是 CPU 在跑，驱动要去读写这个 Buffer，必须用它的内核虚拟地址分身（0xFFFF...）。
+驱动申请的是物理地址：没错！驱动向内存总管要了一块物理地皮，并把这个物理地址分身（0x1000...）告诉了摄像头硬件，让硬件直接灌数据。
+用户 mmap 调用驱动 mmap：没错！驱动通过这个接口，把手里握着的物理地址分身，强行写进了用户进程的页表里，进而为用户生出了一个用户虚拟地址分身（0x7F...）。
+
+#-------------------------------------------------------------------------------------------------------------------------------# 
+就是说，在驱动程序中，驱动进程是可以直接看到物理地址的？但是要访问这个物理地址的数据，也必须通过虚拟内存指针？
+结论完全如你所说：在驱动程序中，驱动确实可以轻松“看到”（获取并记录）物理地址的值；但是，当 CPU 想要去读写这个地址上的图像数据时，它必须、绝对、只能通过内核虚拟内存指针。
+1. 驱动能“看到”物理地址：它只是个普通的“数字”
+对驱动程序来说，物理地址（比如 0x1000000）不是一个可以用来直接解引用的指针，它在 C 语言代码里只是一个普通的无符号长整型数字（在 Linux 内核里专门有一个类型叫 phys_addr_t 或 dma_addr_t）。
+驱动完全能看到它，并且它的主要工作之一就是把这个“数字”当成数据玩弄：
+打印日志：驱动可以把这个物理地址以十六进制的格式打印出来：printk("摄像头物理缓冲区地址是: 0x%llx\n", phys_addr);。
+告诉摄像头硬件：驱动把这个物理地址的“数字”，写进摄像头的控制寄存器里：“喂，硬件，待会儿数据往 0x1000000 这个物理坑位里灌！”
+在这个阶段，物理地址对 CPU 来说只是数据（Data），就像你手抄的一个电话号码，你可以看它、念它、把它写给别人。
+
+2. 驱动要访问数据：CPU 的硬件电路逼它必须用虚拟指针
+但是，如果你的驱动程序自己想去读这个缓冲区里的图像（比如想检查前 4 个字节是不是 JPEG 的文件头 0xFFD8），你绝对不能写出这样的代码：
+C
+// ❌ 错误示范：直接去摸物理地址
+char *phys_ptr = (char *)0x1000000; 
+char header = *phys_ptr; // 💥 瞬间崩溃或读错数据！
+为什么？因为执行这一行读取指令的是 CPU。
+在 Linux 跑起来的那一刻，CPU 内部的 MMU（内存管理单元）就被永久激活了。只要 MMU 在工作，CPU 的硬件电路就有一个死逻辑：凡是 CPU 扔出来的地址指令，一律强制认定为虚拟地址，必须去查页表！
+如果你强行让 CPU 去读 0x1000000，MMU 就会把它当成虚拟地址去翻内核页表。结果要么是页表里根本没有这个虚拟地址的记录（触发内核级的缺页异常，系统直接挂掉），要么是正好对应了其他不相干的物理内存，读出了一堆乱码。
+所以，驱动如果想自己访问这块物理内存，必须先在内核页表里为自己扯一条虚实相通的线，生成一个内核虚拟地址（比如 0xFFFF880001000000）。当 CPU 拿着这个内核虚拟地址去读时，MMU 查内核页表，将其翻译回 0x1000000，才能正确拿到数据。
+
+🛠️ 内核源码里的“两面一体”验证
+在真正的 Linux 摄像头驱动代码里，内核提供的高级内存申请函数，往往会同时、一次性给你返回这两个东西。
+比如摄像头驱动最常用的连续内存分配函数 dma_alloc_coherent()，它的原型和用法是这样的：
+C
+void *virt_addr;         // 👈 给 CPU / 驱动自己用的（内核虚拟地址指针）
+dma_addr_t phys_addr;    // 👈 给摄像头硬件用的（物理地址/总线地址数字）
+// 一把申请出 4MB 的连续物理内存
+virt_addr = dma_alloc_coherent(dev, 4*1024*1024, &phys_addr, GFP_KERNEL);
+// ------------------------------------------------------------------
+// 1. 驱动把【物理地址数字】写给摄像头硬件，硬件不需要通过 MMU，直接往里灌数据
+write_reg(CAMERA_DMA_REG, phys_addr); 
+// 2. 驱动自己想读写这个数据，必须用【内核虚拟地址指针】
+char *data = (char *)virt_addr;
+if (data[0] == 0xFF) {  
+    // 只有通过 virt_addr，CPU 才能在 MMU 的护航下安全读写
+}
+操作系统和硬件的配合简直绝妙：
+摄像头（硬件视角）：拿着 phys_addr（物理地址）直接往内存条里冲，绕过 MMU，速度极快。
+驱动程序（CPU视角）：拿着 virt_addr（虚拟地址）在内核里读写，遵守 MMU 的安全规则。
+应用层算法（用户态视角）：通过 mmap 把 phys_addr 映射出第三张身份证——用户态虚拟地址，高高兴兴地在应用层用指针做 AI 推理。
+
+
+
+
+
+
+
+
+
+
+
+
+用两路摄像头同时采集 RGB 和 IR 画面，在底层进行微秒级时间同步，然后用硬件加速把它们缝合成一个双光输入，最后喂给 AI 模型，并保证 30 FPS 的极低延迟
+项目名称：基于 GStreamer 的多模态（红外+可见光）双光巡检视觉流水线系统
+核心职责/技术栈：C++11、GStreamer、V4L2、多线程、DMA-Buf、Linux 内核事件。
+项目产出（可吹的点）：架构设计：基于 GStreamer 框架实现了高内聚的工业级多媒体 Pipeline，解耦了数据采集、多流同步、AI 推理与视频渲染逻辑。
+多传感器同步：针对红外与可见光硬件中断不同步的问题，手写了基于滑动时间窗口的流对齐算法，抛弃过期帧并实现微秒级时间戳互锁，保证了多模态特征融合的物理空间/时间一致性。
+极致性能优化：全链路采用 DMA-Buf 进行视频帧句柄传递。图像从 V4L2 采集、到自定义融合插件，再到 NPU 推理，全程实现 Zero-Copy（零拷贝），使得 4K+1080P 双流并发下的 CPU 占用率控制在 12% 以内。
+这个执行方向非常明确：定题目 $\rightarrow$ 模拟虚拟双摄像头 $\rightarrow$ 用 C++ 写出时间戳对齐逻辑 $\rightarrow$ 把它封装成 GStreamer 插件。 
+这一套打下来，无论是深度还是工作量，都绝对是一个沉甸甸的、能支撑你通过大厂面试的硬核项目。
+
+
+ffplay -f rawvideo -video_size 800x600 -pixel_format nv12 -framerate 30 test_outputs/test.yuv
+ffplay -f rawvideo -pixel_format nv12 -video_size 640x360 test_outputs/rga_resize_640x360_nv12.yuv
+ffplay -f rawvideo -pixel_format nv21 -video_size 640x360 test_outputs/rga_resize_640x360_nv12.yuv
+ffplay -f h264 -i mpp_encoder_640x360.h264
+
+EAGAIN xioctl(fd_, VIDIOC_DQBUF, &buf)
+EINTR ioctl(fd, request, arg) select
+
+修改PowerShell 的脚本执行策略为允许执行脚本
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+find $RK_SYSROOT -name "im2d.h" -o -name "RgaUtils.h" -o -name "librga.so
+
+Capture DmaBuffer
+  ↓
+Tee
+  ├── MPP encode:
+  │       直接吃 capture dma_fd
+  │       编码完成释放
+  │
+  ├── Display:
+  │       RGA 写入 display buffer pool
+  │       释放 capture dma_fd
+  │       display 慢慢显示自己的 buffer
+  │
+  └── AI:
+          RGA 写入 AI input buffer pool
+          释放 capture dma_fd
+          AI 慢慢推理自己的 buffer
+		  
+		  
+
+
+设计多个线程停止时机时，每个stage的stop都按照 先停输入队列-> 等待stage线程结束（处理输入队列残留帧） -> 停止输出队列进行设计。这样上层可以直接调用stop
+
+[ 整个 fMP4 文件根目录 (Root) ]
+├── ftyp Box (File Type) ─────────────────────────── 【文件身份牌】声明兼容标准（如 mp42/isom），引导播放器加载 MP4 插件
+├── moov Box (Movie) ─────────────────────────────── 【电影总账本】fMP4 下它是空壳骨架，不存具体帧索引，只定义流的属性
+│    └── trak Box (Track) ────────────────────────── 【媒体轨道】代表一路流（视频轨或音频轨），内部开始层层嵌套套娃
+│         └── mdia Box (Media) ───────────────────── 【媒体声明】声明轨道类型，内部 hdlr 盒子会写明 "vide"（视频）
+│              └── minf Box (Media Information) ──── 【媒体控制】视频专属控制面板，内含 vmhd 盒子，处理视频渲染细节
+│                   └── stbl Box (Sample Table) ──── 【索引大本营】传统 MP4 的核心关系数据库，fMP4 下多数表格为空
+│                        └── stsd Box (Sample Desc) ─ 【解码描述列表】核心保险箱，注册当前轨道使用的编码器规格
+│                             └── avc1 Box ───────── 【H.264 规格描述】记录视频物理宽高（如 1920x1080）、颜色空间等
+│                                  └── avcC Box ──── ★【SPS/PPS 物理保险箱】存放从第一帧 Annex-B 抠出来的纯净说明书
+│
+├─  【动态刷盘分段 1 (Fragment 1)】 ───────────────── 每隔 1~2 秒遇关键帧（I帧）触发状态机，强行 fflush 刷盘落盘
+├── moof Box (Movie Fragment) ────────────────────── 【微型局部目录】存放当前这 1~2 秒视频流的“动态临时账本”
+│    └── traf Box (Track Fragment) ───────────────── 【局部轨道分段】对应上文的总 trak，开始局部套娃
+│         ├── tfhd Box (Track Fragment Header) ───── 【分段头】指定当前碎块的 Track ID，以及基础物理偏移量基准
+│         └── trun Box (Track Run) ───────────────── 【帧表映射】★ fMP4 最核心表格！代替 stsz/stco，记录这 1s 内每一帧
+│                                                     的绝对大小(Size)、持续时间(Duration)和是否为关键帧
+├── mdat Box (Media Data) ────────────────────────── 【媒体数据仓库 1】紧跟在 moof 屁股后面，存放这 1~2 秒的纯 H.264 帧
+│                                                     ★ 重点：此时帧前的 00 00 00 01 已被转换为了大端 4 字节长度（AVCC）
+│
+├─  【动态刷盘分段 2 (Fragment 2)】 ───────────────── 只要录像不停止，底层线程就会源源不断地追加写这对“双子星”盒子
+├── moof Box (Movie Fragment) ────────────────────── 【微型局部目录 2】记录第 2 段视频的帧大小和时间戳
+├── mdat Box (Media Data) ────────────────────────── 【媒体数据仓库 2】存放第 2 段视频的纯压缩数据（P帧/I帧）
+│
+├─  ... (以此类推，循环追加 moof + mdat)
+│
+└── mfra Box (Movie Fragment Random Access) ──────── 【全片大地图】★【全片终】手动关闭录像时写入文件最末尾（可选）
+     └── tfra Box (Track Fragment Random Access) ──── 建立“时间 <-> moof 物理位置”的快查表。播放器拖动进度条时，
+                                                      直接 fseek 到文件尾读它，就能瞬间“空降”到指定的 moof 碎块
+													  
+													  
+什么不直接设置mpp输出avcc呢？ 
+ AVCC 是 MP4 muxer 层应该处理的格式,不建议把 MP4 sample 格式绑定到 MPP encoder。这样好处很明显:
+	保存 .h264:
+    直接 fwrite Annex-B
+	保存 .mp4:
+		Mp4RecordStage 转 AVCC
+	推 RTSP / TS:
+		可以继续用 Annex-B 或按 RTP 规则拆 NAL
+	换平台:
+		只改 encoder 输出适配，不影响 MP4 封装逻辑
+		
+		
+modetest  -c 列出板子所有的物理输出接口（比如 MIPI-DSI、HDMI、eDP），并告诉你它们的连接状态和支持的分辨率。
+modetest -M rockchip
+
+
+1. apps/tools/drm_info_test.cpp
+   先打印 connector / mode / plane / format
+2. apps/tools/drm_color_test.cpp
+   让 MIPI 屏幕显示纯色
+3. apps/tools/drm_double_buffer_test.cpp
+   跑双缓冲切换
+4. apps/tools/rga_to_drm_test.cpp
+   RGA 输出到 DRM buffer 并显示
+5. include/rkcam/display/display_sink.hpp
+   定义 IDisplaySink
+6. platform/linux/drm/DrmDisplaySink
+   封装 DRM 显示
+7. pipeline/display_stage
+   接入 CameraPipeline
+8. tee_stage
+   做边预览边录像
+   
+   
+显存画布 (FB)-> 图层 (Plane)-> {CRTC} ->{Encoder}-> {Connector} {物理屏幕}
+
+
+官方权威文档：Kernel.org GPU 驱动子系统文档 kernel.org/doc/html/latest/gpu/index.html  Linux 内核官方关于 GPU/DRM 驱动的全面叙述。
+Linux 官方媒体子系统用户态 API 指南 https://www.kernel.org/doc/html/latest/userspace-api/media/index.html
+
+gstreamor 官网api  https://gstreamer.freedesktop.org/documentation/additional/design/index.html?gi-language=c
+
+kmscube 就是图形开源社区（Mesa/Freedesktop）一个普通的用户态程序，在没有任何窗口管理器帮助的情况下，
+如何直接跟显卡驱动（DRM/KMS）打交道，把画面打满整个屏幕 https://cgit.freedesktop.org/mesa/kmscube/
+
+功能：
+	动态录像。预览：1080x1920 / 540x960 / 360x640，输出到 DRM
+	动态推流。
+	IPC、camctl、断线重连、动态参数
+	
+最推荐的实施顺序
+1. 静态推流跑通
+2. EncodedPacket Tee：录像和推流共享编码结果
+3. 动态开始/停止录像
+4. 状态查询
+5. 请求 IDR
+6. 动态开始/停止推流
+7. 时间充足再做动态码率
+其中第 3～6 项可以共用一套控制设计。
+最终的项目边界
+你的项目做到下面这个程度，就已经不会显得只是普通 API 拼接：
+V4L2 多平面采集
+DMA-BUF 帧传递
+RGA 硬件缩放/旋转
+DRM 低延迟预览
+MPP H.264 硬件编码
+MP4 录像
+RTSP/RTMP 推流
+帧与编码包 Tee 分支
+有界队列、背压与丢帧策略
+运行中启停录像和推流
+状态查询与 IDR 请求
+可靠退出和资源释放
+	
+	
+	
+1. 具体的视频帧（Frame/Packet）怎么打包？ 标准英文用名： Length-Prefixed NALUs 中文业界常用： 长度前缀 NALU 单元
+当视频开始播放，源源不断传输过来的每一帧图像数据（NALU），确实如你所说，只有这两种格式：
+Annex B 帧格式：
+在每个 NALU（如 I 帧、P 帧）的前面，直接怼上 00 00 00 01。
+Plaintext
+[00 00 00 01] [I-Frame 画面数据...]
+AVCC 帧格式：
+在每个 NALU 的前面，不带起始码，而是用 4 个字节来存放这帧数据的实际长度。
+Plaintext
+[0x00 0x01 0x2A 0x30] [I-Frame 画面数据...]  <-- 前4字节表示后面画面数据一共有 76336 字节
+这就是你脑海里记住的正确规则，它专门用来传输具体的画面数据。
+2. 初始化解码器用的 “Extradata” 怎么打包？ 标准英文用名： AVCDecoderConfigurationRecord 中文业界常用： AVCC 格式的 Extradata / H.264 序列头 / 全局配置解码记录
+但是，解码器（比如显卡或播放器）在收到任何画面之前，必须先进行初始化。它需要知道视频的分辨率、Profile 和 Level。
+这个用来初始化的“超级包”，在 FFmpeg 里就叫做 extradata（或者叫 AVCDecoderConfigurationRecord）。
+因为两种格式的“世界观”不同，这个初始化包也被分成了两种写法：
+🟢 做法一：Annex B 的初始化头（Extradata）
+在 Annex B 的世界里，没有什么特殊的初始化结构体。它非常简单粗暴，直接把 SPS 和 PPS 像普通帧一样，用起始码拼在一起，当成初始化数据喂给解码器：
+Plaintext
+[00 00 00 01] [SPS 原始数据] [00 00 00 01] [PPS 原始数据]
+🔵 做法二：AVCC 的初始化头（Extradata）
+但在 AVCC（MP4 容器）的世界里，它规定：初始化数据不能只有 SPS 和 PPS，必须提供一个结构化的元数据头。
+这个元数据头就是你刚才看到的 buildAvccExtradata 函数生成的东西。它包含：
+告诉解码器这个视频是啥配置（版本号、Profile、Level）。
+告诉解码器在读后续画面时，那个“数据长度”占几个字节（就是那个 0xff 里的 lengthSizeMinusOne。如果是 4 字节，这里就是 3）。
+接着再用“长度指示器”的方式，塞入 SPS 和 PPS。
+Plaintext
+[0x01][Profile][Compat][Level][0xFF(代表帧头长度是4)] [2字节SPS长度][SPS] [2字节PPS长度][PPS]
+对于ffmpeg的extradata到底使用什么格式：
+方案 A：手写转换（最稳妥、最高效）
+在你的代码里，根据输出的协议，手动给 extradata 喂最规范的格式：
+如果是 MP4 录制 / RTMP 推流 / RTSP 推流： 一律在代码中通过 buildAvccExtradata 生成 AVCC 格式（初始化解码器用的）喂给 FFmpeg。
+如果是 MPEG-TS 录制 / 裸流传输： 一律通过 buildAnnexBExtradata 生成 Annex B 格式。
+
+
+================================================================================
+                     FFmpeg 内置参数与组件名称通用查询指南
+================================================================================
+一、 查询【封装格式/推流协议】名称 (用于 avformat_alloc_output_context2 等函数)
+--------------------------------------------------------------------------------
+1. 查询所有支持的输出封装器 (Muxers / 推流与文件写入)
+   命令：ffmpeg -muxers
+   说明：列表左侧带有 'E' 的即为支持输出。例如看到 "E rtsp"，代码里就填 "rtsp"。
+   快捷搜索举例：ffmpeg -muxers | grep rtsp   (Windows用 findstr 代替 grep)
+2. 查询所有支持的输入解封装器 (Demuxers / 拉流与文件读取)
+   命令：ffmpeg -demuxers
+   说明：列表左侧带有 'D' 的即为支持输入。例如看到 "D rtsp"，代码里就填 "rtsp"。
+   快捷搜索举例：ffmpeg -demuxers | grep rtsp
+3. 同时查询输入和输出的所有容器/协议格式
+   命令：ffmpeg -formats
+二、 查询【编解码器】准确字符串名称 (用于 avcodec_find_encoder_by_name 等函数)
+--------------------------------------------------------------------------------
+1. 查询所有支持的编码器 (Encoders / 压缩视频/音频)
+   命令：ffmpeg -encoders
+   说明：用于查找软解或硬件加速编码器的确切名字。
+   快捷搜索举例：ffmpeg -encoders | grep h264
+   常见结果：libx264 (CPU软解), h264_nvenc (英伟达硬件加速), h264_rkmpp (瑞芯微硬件加速)
+2. 查询所有支持的解码器 (Decoders / 解压视频/音频)
+   命令：ffmpeg -decoders
+   说明：用于查找对应的解码组件名称。
+   快捷搜索举例：ffmpeg -decoders | grep h264
+3. 查询所有已知的编解码器基本 ID 列表
+   命令：ffmpeg -codecs
+三、 查询【底层网络传输协议】前缀 (用于 avio_open 等 URL 裸流读写)
+--------------------------------------------------------------------------------
+1. 查询所有支持的底层通信协议
+   命令：ffmpeg -protocols
+   说明：会明确分类输出 Input(输入) 和 Output(输出) 支持的前缀。
+   常见结果：udp, tcp, rtmp, rtp, http 等。代码里填 URL 时必须以此开头（如 "tcp://..."）。
+四、 查询【特定组件的 AVDictionary 参数说明书】(用于 av_dict_set 配置参数)
+--------------------------------------------------------------------------------
+1. 查询某个具体封装器(Muxer)支持的全部字符串 Key 和 Value
+   命令：ffmpeg -h muxer=封装器名称
+   举例：ffmpeg -h muxer=rtsp
+   举例：ffmpeg -h muxer=flv
+   说明：能直接看到如 -rtsp_transport, -muxdelay 等参数的底层确切拼写、类型以及可选值。
+2. 查询某个具体编码器(Encoder)支持的全部参数
+   命令：ffmpeg -h encoder=编码器名称
+   举例：ffmpeg -h encoder=libx264
+   说明：能看到该编码器专属的高级调优 Key（如 preset, tune 等）。
+================================================================================
+提示：在 Linux/嵌入式板子上配合 `| grep 关键字`，在 Windows 终端配合 `| findstr 关键字` 过滤使用效率最高。
+
+
+ffmpeg神器网站https://ffmpeg.org/doxygen/trunk/index.html     //代码手册”：教你 如何调用 FFmpeg 的 C/C++ API 函数与结构体
+			https://wiki.multimedia.cx/index.php/Main_Page   //“数据字典”：教你 理解底层二进制流（比特/字节）是怎么按规范排列的。 和ffmpeg无关，讲的是数据协议格式
+
+
+
+
+确认 ALSA 设备
+arecord -l —— 查看系统中的音频输入设备（“找麦克风”）
+arecord -D hw:0,0 --dump-hw-params 确认支持的采集参数
+arecord -D hw:0,0 -f S16_LE -r 48000 -c 2 -d 5 /userdata/rkcam/output/test.wav 从指定硬件直接录制音频（“纯底层录音”）-d 录制时长，单位为s
+注意: 音频里一帧的定义：Frame（帧）是指所有通道在同一时刻的一个采样点集合。
+比如在双声道、16位深度下，1个 Frame = 2 通道 * 2 字节 = 4 字节。这里限制一次中断最少可以只采集 8 个 Frame 的数据，最多采集 65536 个 Frame。
+下面是查询的命令解释，有点重要：
+root@ATK-DLRK3568:/# arecord -D hw:0,0 --dump-hw-params
+Recording WAVE 'stdin' : Unsigned 8 bit, Rate 8000 Hz, Mono
+HW Params of device "hw:0,0":
+--------------------
+ACCESS:  MMAP_INTERLEAVED RW_INTERLEAVED
+FORMAT:  S16_LE S24_LE S32_LE
+SUBFORMAT:  STD
+SAMPLE_BITS: [16 32]
+FRAME_BITS: [32 256]
+CHANNELS: [2 8]
+RATE: [8000 96000]
+PERIOD_TIME: (83 8192000] 
+PERIOD_SIZE: [8 65536]
+PERIOD_BYTES: [256 1900800]
+PERIODS: [2 16384]
+BUFFER_TIME: (166 16384000]
+BUFFER_SIZE: [16 131072]
+BUFFER_BYTES: [256 524288]
+TICK_TIME: ALL
+--------------------
+1.PERIOD_TIME （微秒 us）：硬件中断一次的时间间隔.表示每次硬件录满一勺数据（Period）并通知 CPU 一次，中间经过的时间。
+它的范围是 (83us, 8192000us]（即 0.083 毫秒到 8.19 秒。cpu一次拿PERIOD_SIZE个数据。这个值直接决定了你音频的延迟（Latency）
+2.PERIOD_SIZE（帧 Frame）：一勺水里装了多少个“采样帧”。Frame（帧） 是指所有通道在同一时刻的一个采样点集合。比如在双声道、16位深度下，1个 Frame = 2 通道 * 2 字节 = 4 字节。
+这里限制一次中断最少可以只采集 8 个 Frame 的数据，最多采集 65536 个 Frame。
+3.PERIOD_BYTES: [256 1900800] （字节 Byte）
+大白话：一勺水折算成内存字节数是多少。
+含义：这和 PERIOD_SIZE 是一回事，只不过换算成了内存大小（Byte）。
+驱动要求单次中断传输的字节数最小不能低于 256 字节，最大不能超过 1.9MB 左右。
+4.PERIODS: [2 16384] （个数）。即一个buffer能存储多少period
+大白话：一个大水桶（Buffer）里，能装几水勺（Period）的水？
+技术定义：Buffer 缓冲区是由多个 Period 组成的环形缓冲区（Ring Buffer）。硬件驱动规定：一个 Buffer 里面最少必须划分为 2 个 Period，最多可以划分成 16384 个 Period。
+注：通常开发中我们默认设置为 2 到 4 个 Period
+5.BUFFER_TIME: (166 16384000] （微秒 us）
+大白话：整桶水装满需要多久？（即整个音频缓冲区的最大时间容量）。
+含义：表示如果 CPU 完全不来拿数据，音频缓冲区从空到被全部塞满（溢出 Overrun 报错）所需要的时间。
+这里支持最少 166微秒，最多 16.38 秒
+6.BUFFER_SIZE: [16 131072] （帧 Frame）
+大白话：整个水桶能装多少个“采样帧”。
+关系公式：BUFFER_SIZE = PERIOD_SIZE * PERIODS。驱动规定整个缓冲区最大支持 131072 个 Frame 的容量
+7. BUFFER_BYTES: [256 524288] （字节 Byte）
+大白话：整桶水折算成内存字节数是多少。
+含义：整个音频 Ring Buffer 在内核中申请的物理内存大小。最小 256 字节，最大 524,288 字节（512KB）。
+对开发的影响：它决定了你的系统抗抖动能力。如果你的 C++ 线程因为系统调度卡了一下，只要卡顿时间没有超过 BUFFER_TIME，
+数据就不会丢（Overrun）；如果卡顿时间超过了，水桶溢出了，录音就会出现“咔哒”一声的丢包杂音。
+8.注意，整个流程是硬件每次往buffer存放PERIOD_SIZE数据，然后，cpu每个PERIOD_TIME从buffer中拿PERIOD_SIZE数据。
+┌────────────────────────────────────────────────────────┐
+│                     BUFFER_SIZE (整个内存缓冲区)        │
+└────────────────────────────────────────────────────────┘
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│  Period #1   │  Period #2   │  Period #3   │  Period #4   │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+├─PERIOD_SIZE─┤
+
+1. ALSA 驱动视角：硬件采样帧（Sample Frame）
+	它关心的是：物理内存怎么对齐？硬件 DMA 一次怎么搬运数据？
+	它的定义：同一极短时刻（$t$），所有声道采样点的集合。
+	为什么叫 Frame：在硬件电路里，左声道和右声道是并行/交错传输的。在某个微小的时钟脉冲下，左右声道各出 1 个点，这两个点在物理上被捆绑成一组合并传输。驱动工程师就把这一“横截面”的数据称为 1 个 Frame。
+	对于双声道 16bit：1 个 ALSA Frame = 4 个字节（左 2 字节 + 右 2 字节）。
+2. AAC / FFmpeg 算法视角：编码帧（Audio Codec Frame）
+	它关心的是：时间长度是多少？频域变换（MDCT）需要凑够多少个点？
+	它的定义：一段连续的时间窗口（通常是 1024 个点的时间段）。
+	为什么叫 Frame：AAC 压缩音频时，不能一个采样点一个采样点地压缩，它必须切出一段连续的时间片段（比如 1024 个连续时间点，约 23.2 毫秒），把这段时域波形一次性通过傅里叶/MDCT 变换转成频域。算法工程师就把这一“时间段”的数据称为 1 个 Frame。
+	对于双声道 16bit：1 个 AAC Frame = 1024 个 ALSA Frame = 4096 个字节
+一、 黄金判别法则：看代码所在的“层级”
+1. 处于【底层驱动 / 音频采集 / 播放层】 -> 默认是 ALSA 的帧（采样帧）
+	只要代码在跟声卡、硬件、采集库打交道，“帧”绝对是指“同一时刻所有声道采样点的集合（1 个时间点）”。
+	常见场景：ALSA (snd_pcm_readi)、PortAudio、PulseAudio、Android AAudio/AudioTrack、 Windows WASAPI。
+	代码特征：计算字节数时，用 frames * channels * (bits / 8)。这里的 frame 往往只有几字节（比如双声道 16bit 下，1 frame = 4 bytes）。
+2. 处于【编解码 / 媒体处理 / 文件封包层】 -> 默认是 FFmpeg 的帧（编码帧/数据块）
+	只要代码在处理 AAC、MP3、H.264，或者调用 FFmpeg、WebRTC 算法模块，“帧”绝对是指“包含 N 个时间点的一大块打包数据”.
+	常见场景：FFmpeg (AVFrame)、libfdk_aac、WebRTC 音频处理模块、MP4 封装。
+	代码特征：提到 frame 时，往往伴随着固定数值（如 AAC 的 1024、MP3 的 1152、Opus 的 960）。这里的 frame 代表一段连续的时间（比如 23.2ms），里面包含了成百上千个 ALSA 采样帧。
+
+
+
+C++ 进阶路上必经的“四大类型转换”: static_cast dynamic_cast const_cast reinterpret_cast
+
+
+
+那下面为什么就可以肯定这个是小端字节写入的？
+writeBytes(fp_, "RIFF", 4)
+bool WavSaveStage::writeBytes(std::FILE* fp, const void* data, size_t size)
+{
+	if (!fp || !data || size == 0) {
+	return false;
+	}
+	return std::fwrite(data, 1, size, fp) == size;
+} 
+因为 "RIFF" 是一个字符串（字符数组 char[4]），而不是一个多字节数字（如 uint32_t）！
+这是理解大小端时最容易产生误解的地方：大小端转换只对“多字节数字”生效，对“字节数组/字符串”完全不生效！
+在 C/C++ 中，字符串 "RIFF" 本质上是 4 个独立的 char（每个 char 刚好占 1 个字节）：
+data[0]	'R'  低地址（数组都是0是低地址）
+data[1]	'I'
+data[2]	'F'
+data[3]	'F'
+fwrite 是逐字节顺序写入的。std::fwrite(data, 1, 4, fp) 的工作原理是：从内存低地址开始，一个字节接一个字节地刷进磁盘文件里。所以写出来的文件内容必然是：0x52 $\rightarrow$ 0x49 $\rightarrow$ 0x46 $\rightarrow$ 0x46 （即 ASCII 码的 "RIFF"）
+什么时候大小端才会搞乱数据？
+只有当你把四个字符强行当成一个 32 位整数（uint32_t）处理时，大小端才会生效！
+// 方式 A：作为字符串 / 字节数组 (代码里用的方式)
+writeBytes(fp_, "RIFF", 4);
+// 内存里是: [0x52, 0x49, 0x46, 0x46]
+// 无论大端还是小端，写进文件的都是: 0x52 0x49 0x46 0x46 ('R' 'I' 'F' 'F')  ---- 绝对安全！
+// 方式 B：作为一个 uint32_t 整数 (容易踩坑的方式)
+uint32_t riff_magic = 0x52494646; // 也就是把 "RIFF" 拼成了一个整型数字
+std::fwrite(&riff_magic, sizeof(uint32_t), 1, fp_);
+// 在大端 CPU 上：内存里存为 [0x52, 0x49, 0x46, 0x46]，写进文件是 "RIFF"
+// 在小端 CPU 上：内存里存为 [0x46, 0x46, 0x49, 0x52]，写进文件就变成了 "FFIR"  ---- 损坏！
+
+
+二进制文件查看在线网站：https://hexed.it/  
+					
+					
+					
+1. ISO（国际标准化组织）
+它是谁：全球最大的标准化组织（平时听到的 ISO 9001 质量认证也是它）。
+在音视频里管什么：管文件封装和音频编码。
+MP4 格式（ISO/IEC 14496-12）是 ISO 规定的。
+AAC 音频算法（ISO/IEC 14496-3，包含了刚才聊的 AudioSpecificConfig / ASC）也是 ISO 规定的。
+网址：https://www.iso.org/search.html?PROD_isoorg_en%5Bquery%5D=ISO%2FIEC%2014496
+2. ITU（国际电信联盟）
+它是谁：联合国下面专门管通信和电讯的官方机构（ITU-T 代表电信标准化部门）。
+在音视频里管什么：管视频压缩算法。
+你听过的所有 H. 开头的视频格式，全都是它定的：H.261、H.263、H.264、H.265。
+后来它和 ISO 联合成立了组（JVT），所以 H.264 在 ISO 那边又叫 MPEG-4 AVC，本质上是同一个东西。
+3. RFC / IETF（互联网工程任务组）
+它们是谁：IETF 是互联网标准的制定组织；而 RFC（Request for Comments，请求意见稿）不是机构，而是 IETF 发布的标准文档的名称。
+在音视频里管什么：管网络传输协议。
+整个互联网都是建立在 RFC 文档上的（比如 HTTP 协议、TCP/IP 协议）。
+在音视频推流/拉流里，RTSP 协议、RTP 传输协议、以及 H.264/AAC 怎么在网络里打包，全写在各个 RFC 编号文档里（比如 RFC 6184 规定了 H.264 的 RTP 封包）。
+网址：https://www.rfc-editor.org/search/?status=Internet+Standard
+4. ETSI（欧洲电信标准协会）
+它是谁：欧洲的电信标准组织（比如 2G/3G/4G/5G 移动通信、DVB 数字电视广播标准等）。
+在音视频里管什么：提供免费查阅的电信/广播标准。
+ISO 的规范（比如 AAC、MP4 标准）很多是要花钱买 PDF 的；
+但 ETSI 经常会把很多数字电视、音频传输的技术规范转化为 完全免费公开的 ETSI 技术标准（TS 文件），所以开发者很喜欢去 ETSI 官网免费下载官方规范文件
+
+当你要把 H.264 和 AAC 封装进 MP4 文件 时，核心答案是：主要找 ISO 的标准文档（ISO/IEC 14496 系列）。  
+分工逻辑非常明确：ITU 只管 H.264 压缩出来的裸流数据（如 SPS/PPS 内部每个 bit 代表什么含义）。  
+ISO 规定了如何把这些数据包装成 MP4 文件里的 Box（如 avcC、esds）。  
+你在写代码时涉及的 3 个核心官方文档及下载链接如下：
+	1. H.264 的 extradata 封装：看 ISO/IEC 14496-15在 MP4 文件中，H.264 的 extradata 并不使用带 00 00 00 01 起始码的 Annex B 格式，而是被包装成一个叫 AVCDecoderConfigurationRecord 的结构，存在 MP4 的 avcC Box 里。
+	对应官方标准：ISO/IEC 14496-15 (Carriage of network abstraction layer (NAL) unit structured video in the ISO base media file format)。  
+	查阅章节：重点看 Section 5.2.4 (AVCDecoderConfigurationRecord)。
+	这里详细列出了这个 Record 的位结构（Version、Profile、Level、LengthSizeMinusOne、SPS 数量及长度、PPS 数量及长度）。
+	文档下载链接：ISO/IEC 14496-15 官方规范 PDF（OSRS 镜像公开版） https://ossrs.net/lts/zh-cn/assets/files/ISO_IEC_14496-15-AVC-format-2012-345a5b466cc73e978fd9dd0840361e8b.pdf
+	2. AAC 的 extradata 封装：看 ISO/IEC 14496-3AAC 的 extradata 在音视频开发中被称为 AudioSpecificConfig (ASC)。
+	它通常是 2 个字节（16 bits），写进了 MP4 的 esds Box (Elementary Stream Descriptor) 里。
+	对应官方标准：ISO/IEC 14496-3 (MPEG-4 Audio)。 
+	查阅章节：重点看 Subpart 1 / Section 1.6.2.1 (AudioSpecificConfig) 的语法结构表。它精确规定了前 5 个 bit 代表 audioObjectType（AAC Profile），后 4 个 bit 代表 samplingFrequencyIndex（采样率索引），再后 4 个 bit 代表 channelConfiguration（声道数）。
+	文档下载链接：ISO/IEC 14496-3 官方规范 PDF（Waterloo 大学公开版本）https://csclub.uwaterloo.ca/~pbarfuss/ISO14496-3-2009.pdf
+	3. MP4 容器底层的 Box 结构：看 ISO/IEC 14496-12
+	如果你想知道 MP4 文件的树状 Box 结构（如 moov -> trak -> mdia -> minf -> stbl -> stsd），需要查阅 MP4 的基础容器规范。
+	对应官方标准：ISO/IEC 14496-12 (ISO Base Media File Format, ISOBMFF)。  
+	文档下载链接：ISO 官方 ITTF 免费标准下载主页（搜索 14496-12 即可直接下载免费版的 Zip 压缩包） https://standards.iso.org/ittf/PubliclyAvailableStandards/
+	4. 什么情况下才需要找 ITU-T H.264？
+	只有当你手头拿到的是裸 H.264 码流（比如以 00 00 00 01 开头的 SPS NALU），并且你需要手写 BitStream 解析代码去逐个 bit 读取 SPS，提取视频的真实分辨率、帧率、色彩空间时，才需要找 ITU。
+	对应官方标准：ITU-T H.264。  
+	查阅章节：Section 7.3.2.1 (Sequence parameter set RBSP syntax) 和 Annex B。
+	文档下载链接：ITU-T H.264 官方中文/英文免费下载页面 https://www.itu.int/itu-t/recommendations/rec.aspx?rec=14659&lang=zh
+💡 FFmpeg 开发工程建议在使用 FFmpeg 库写 MP4 文件时：
+	如果开启了 AV_CODEC_FLAG_GLOBAL_HEADER：
+	编码器输出的 AVCodecContext->extradata 中，H.264 吐出的就是符合 ISO 14496-15 的 AVCDecoderConfigurationRecord 格式；
+	AAC 吐出的就是符合 ISO 14496-3 的 2 字节 AudioSpecificConfig。
+	如果你使用 FFmpeg 的 avformat_write_header() 写 MP4 容器：FFmpeg 会自动将这两个 extradata 解析并写入 MP4 的 avcC Box 和 esds Box 中，不需要你手动去拼接 MP4 的二进制字节。
+	
+你想找的规范/格式ISO 			标准总编号   				对应全称
+AAC音频编码					ISO/IEC14496-3			MPEG-4Audio
+H.264视频编码					ISO/IEC14496-10			Advanced Video Coding (AVC)
+MP4 基础容器 (ISOBMFF)		ISO/IEC 14496-12		ISO Base Media File Format
+MP4 文件格式 (.mp4)			ISO/IEC 14496-14		MP4 File Format
+H.264 / H.265在MP4中的封装	ISO/IEC 14496-15		Carriage of NAL unit structured video in ISOBMFF
+H.265 (HEVC) 视频编码			ISO/IEC 23008-2			High Efficiency Coding and Media Delivery (HEVC)
+
+
+ffplay rtsp拉流
+ffplay -rtsp_transport tcp rtsp://192.168.56.100:8554/live  //没什么用，这个ffplay本身延迟十分严重。ffplay有声音，且支持aac
+http://127.0.0.1:8889/live/  //mediamtx自带的webrtc，延迟很低.注意WebRTC不支持aac，支持opus，所以没有声音
+
+一个编码后的h264包：下面SPS PPS IDR_slice都是一个nal
+模式 A：全部放在一个 packet
+MppPacket 0：
+    SPS
+    PPS
+    IDR slice
+模式 B：编码头单独输出
+MppPacket 0：
+    SPS
+    PPS
+MppPacket 1：
+    IDR slice
+模式 C：一帧多slice
+MppPacket 0：
+    SPS
+    PPS
+    IDR slice 0
+    IDR slice 1
+或者甚至：
+MppPacket 0：SPS PPS
+MppPacket 1：IDR slice 0
+MppPacket 2：IDR slice 1
+
+
+C++11 的六种 Memory Order（Acquire/Release/Relaxed）区别与性能选型
+
+
+================================================================================
+C++ 三大内存模型与 6 种内存顺序整理
+一、三大内存模型与 6 种内存顺序
+【1】自由模型（Relaxed Ordering）
+std::memory_order_relaxed
+[适用操作] 读（load）、写（store）、读改写（RMW，如 fetch_add）。
+[核心保障] 只保证当前原子变量本身的原子性，不提供任何跨变量的内存顺序约束。编译器和 CPU 可以任意重排序周围的非原子代码。
+[典型场景] 纯计数器（如统计帧率、处理字节数计数）、不需要与其他变量同步的线程终止标志位。
+【2】获取-释放模型（Acquire-Release Ordering）
+说明：这是工程中最常用的高性能模型，通常由 acquire 和 release 成对使用，建立跨线程的“同步关口”。
+std::memory_order_release（释放语义）
+[适用操作] 写操作（store）或 RMW 操作。
+[核心保障] 单向向下的屏障。本线程中发生在 release 之前的所有读写指令，绝不能被重排序到 release 之后。
+[主要作用] 发布/导出数据（“我把前面的数据都准备好了，现在贴上封条”）。
+std::memory_order_acquire（获取语义）
+[适用操作] 读操作（load）或 RMW 操作。
+[核心保障] 单向向上的屏障。本线程中发生在 acquire 之后的所有读写指令，绝不能被重排序到 acquire 之前。
+[主要作用] 消费/读取数据（“我看到封条变了，立马解开并读取前面的数据”）。
+std::memory_order_acq_rel（获取-释放组合）
+[适用操作] 读改写操作（RMW，如 exchange、compare_exchange_strong）。
+[核心保障] 同时具备 acquire 和 release 的双向屏障效果。
+[典型场景] 无锁队列入队/出队、智能指针引用计数减 1 操作。
+std::memory_order_consume（数据依赖获取 - 不推荐使用）
+[适用操作] 读操作（load）。
+[核心保障] 比 acquire 更弱，只约束与当前原子变量存在直接数据依赖（Data Dependency）的变量重排序。
+[当前现状] 因编译器极难实现，C++17 起标记为不推荐（Discouraged），大部分编译器会自动将其提升为 std::memory_order_acquire。工程中直接用 acquire 即可。
+【3】顺序一致性模型（Sequential Consistency）
+std::memory_order_seq_cst
+[适用操作] 所有原子操作（load、store、RMW）。
+[核心保障] 最强约束，C++ 的默认选项。除了具备 acq_rel 的所有屏障功能外，还会建立一个全局统一的执行顺序（Global Total Order）。所有 CPU 核心看到的全部 seq_cst 操作的发生顺序都是完全一致的。
+[性能开销] 最高。在 X86 上几乎无开销，但在 ARM / RISC-V 等弱内存模型架构上，会插入比较沉重的硬件内存栅栏（Memory Fence / DMB）指令。
+[典型场景] 算法逻辑极其复杂、无法准确判断 Acquire-Release 边界时作为安全保底；默认的 atomic 隐式参数。
+
+================================================================================
+
+
+    while (current < min_pts_us) {
+        //compare_exchange(CAS):只有当内存里的值依然是我刚才读到的旧值时，我才写入新值；否则拒绝写入，并告诉我最新值是多少
+        if (pending_idr_min_pts_us_
+                .compare_exchange_weak(
+                    current,
+                    min_pts_us,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire)) {
+            break;
+        }
+
+        /*
+         * CAS失败后，current会自动更新为
+         * 最新的pending值，然后继续判断。
+         */
+    }原理：
+compare_exchange(CAS):只有当内存里的值依然是我刚才读到的旧值时，我才写入新值；否则拒绝写入，并告诉我最新值是多少
+一.没有 CAS 时的写覆盖错误（覆盖/丢失更新）
+假设初始值 count = 10，线程 A 和线程 B 都要做 count + 5：
+[线程 A] 读到 10  ----------------------> 计算 10+5=15 -----> 写入 15 (覆盖了内存)
+[线程 B] ------- 读到 10 -> 计算 10+5=15 ---------------------------------> 写入 15 (把 15 又写了一遍)
+结果：两次加法执行完，count 变成了 15 而不是 20。线程 B 覆盖了线程 A 的修改，造成了写入错误（丢失更新）
+二.有 CAS (compare_exchange) 时的安全逻辑
+CAS 的逻辑是：“只有当内存里的值依然是我刚才读到的旧值时，我才写入新值；否则拒绝写入，并告诉我最新值是多少。”
+回到上面的例子：
+1. 线程 A 和 线程 B 都读取到内存值 expected = 10。
+2. 线程 A 执行 CAS(expected=10, desired=15)：
+   - 检查内存：当前还是 10，符合预期！
+   - 成功写入：内存更新为 15。
+3. 线程 B 稍慢一步，执行 CAS(expected=10, desired=15)：
+   - 检查内存：发现内存已经被线程 A 改成了 15，不等于期望的 10！
+   - CAS 宣告失败：拒绝写入！
+   - 自动更新：把线程 B 本地的 expected 自动修正为最新的 15。
+4. 线程 B 在 while 循环中检测到失败，拿最新的 15 重新计算：15 + 5 = 20。
+5. 线程 B 再次执行 CAS(expected=15, desired=20)：
+   - 检查内存：当前是 15，符合预期！
+   - 成功写入：内存更新为 20。
+结果：通过 CAS，线程 B 发现有竞争后自动放弃了错误的写入，并在获取最新值后重试，从而保证了多线程并发写入的绝对正确。
+
+compare_exchange_weak 允许虚假失败
+compare_exchange_strong 不允许虚假失败
+什么是“虚假失败（Spurious Failure）”？
+假设内存里 val = 100，你执行 CAS 操作希望把它改为 200，且你的 expected 也是 100：
+compare_exchange_strong：
+检查发现 100 == 100，写入 200，绝对返回 true。只有当其他人把内存改成 101 时，它才会返回 false。
+compare_exchange_weak：
+检查发现 100 == 100，但在 ARM/RISC-V 等精简指令集（RISC）架构上，如果在指令执行瞬间发生了 CPU 上下文切换、硬件中断或缓存行（Cache Line）失效，它可能直接放弃写入，并返回 false。这就是虚假失败。
+
+
+#SHARED: 决定是静态库还是动态库
+#IMPORTED:告诉cmake，这个库是已经编译好的.so，不需要从cpp开始编译
+#GLOBAL: add_library 创建的 target 默认有作用域限制：只能在创建它的那个目录及其子目录中使用。这里已经位于顶层，是防御性设置
+#PUBLIC  PUBLIC 是传播修饰符.控制的是：这个属性要传递给依赖我的下游目标.任何链接了 rkcam_ai 的目标也自动继承这个 include 路径。
+#PRIVATE 不要把这个路径传递我的下游目标。
+例子： 现在有 
+rknn_engine.hpp：包含了${CMAKE_SOURCE_DIR}/include下的各个头文件，同时包含另一个路径的#include <rknn_api.h> 文件
+rknn_engine.cpp：单独包含了${PROJECT_SOURCE_DIR}/third_party/stb下面的头文件
+要编译rkcam::ai库。
+add_library(
+    rkcam_ai
+    STATIC
+    image_loader.cpp
+    rknn_engine.cpp
+)
+target_include_directories(rkcam_ai 
+    PUBLIC 
+        ${CMAKE_SOURCE_DIR}/include   //${CMAKE_SOURCE_DIR}/include包含在头文件rknn_engine.hpp，下游依赖包含头文件rknn_engine.hpp，必须知道${CMAKE_SOURCE_DIR}/include下各个头文件路径，否则编译不通过
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}/third_party/stb"    //${PROJECT_SOURCE_DIR}/third_party/stb包含在rknn_engine.cpp中，下游只包含了rknn_engine.hpp，编译可以通过，不需要让下游知道
+)
+target_link_libraries(
+    rkcam_ai
+    PUBLIC 
+        RKNN::Runtime  //下游链接 rkcam_ai 时，自动也链接 librknnrt.so,同时下游自动获得 rknn_api.h 的搜索路径
+)
+因为RKNN::Runtime这个库定义的时候如下
+    set_target_properties(
+        RKNN::Runtime
+        PROPERTIES
+        IMPORTED_LOCATION
+            "${RKNN_RUNTIME_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES  //这里已经把库和头文件路径绑定了，绑定了 include 路径
+            "${RKNN_INCLUDE_DIR}"
+    )
+
+
+rgb_resized 的内存排列（HWC）
+rgb_resized.data:
+索引:  0   1   2   3   4   5   6   7   8   9  10  11
+      ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+      │ R │ G │ B │ R │ G │ B │ R │ G │ B │ R │ G │ B │
+      └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+       ← 像素0 →  ← 像素1 →  ← 像素2 →  ← 像素3 →
+
+排列规则：每个像素的 R、G、B 紧挨在一起
+索引公式：data[i * 3 + c]  →  第 i 个像素的第 c 个通道
+
+result.tensor.data 的内存排列（NCHW）
+result.tensor.data（6 通道，4 个像素）：
+索引:  0   1   2   3 │  4   5   6   7 │  8   9  10  11 │ 12  13  14  15 │ ...
+      ┌───┬───┬───┬───┼───┬───┬───┬───┼───┬───┬───┬───┼───┬───┬───┬───┤
+      │R0 │R1 │R2 │R3 │G0 │G1 │G2 │G3 │B0 │B1 │B2 │B3 │IR0│IR1│IR2│IR3│ ...
+      └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+       ←─ 通道0 ─→  ←─ 通道1 ─→  ←─ 通道2 ─→  ←─ 通道3 ─→
+          (R)           (G)          (B)         (IR R)
+排列规则：同一个通道的所有像素在内存中是连续的
+索引公式：data[c * pixels + i]  →  第 c 个通道的第 i 个像素
+
+
+<algorithm>:提供通用算法（排序、查找、比较等）。
+例：std::sort() std::min() std::max() std::find()
+<chrono>:提供时间日期工具（计时、获取当前时间等）。
+例：std::chrono::steady_clock::now()  std::chrono::duration_cast<>()
+<cstddef>:提供基本类型定义。
+例：std::size_t std::ptrdiff_t std::nullptr_t
+<exception>:提供异常基类。
+例：std::exception::what()  自定义异常时继承 std::exception
+<iomanip>:提供IO格式化操作符。
+例：std::setw() std::setprecision() std::setfill() std::fixed
+<iostream>:提供标准输入输出流。
+例：std::cout std::cerr std::cin std::endl
+<stdexcept>:提供标准异常类。
+例：std::runtime_error std::invalid_argument std::out_of_range
+<string>:提供字符串类。
+例：std::string std::to_string() std::stod()
+<utility>:提供通用工具函数。
+例：std::move() std::swap() std::pair std::forward()
+<vector>:提供动态数组容器。
+例：std::vector std::vector::push_back() std::vector::size()
+
+
+实例打印中
+| 符号 | 含义 |
+| :--- | :--- |
+| `<xxx>` | 必选参数（必须填） |
+| `[xxx]` | 可选参数（可以不填） |
+
+手动发送 EOF
+Linux / macOS： Ctrl + D
+Windows CMD / PowerShell：Ctrl + Z 然后 Enter
+
+
+<cstdlib>
+| 函数 | 用途 |
+|------|------|
+| `abs()` | 求绝对值 |
+| `atoi()` | 字符串转整数 |
+| `rand()` / `srand()` | 随机数 |
+| `malloc()` / `free()` | 动态内存分配 |
+| `exit()` | 终止程序 |
+
+
+
+| 类型        | 字节数 | 最小值                     | 最大值                    | 约等于10的几次方 |
+| ----------- | :----: | -------------------------- | ------------------------- | :--------------: |
+| `int`       |   4    | -2,147,483,648             | 2,147,483,647             |   ±21亿 ≈ 10⁹    |
+| `long long` |   8    | -9,223,372,036,854,775,808 | 9,223,372,036,854,775,807 | ±922亿亿 ≈ 10¹⁸  |
+
+≡ 是"同余"符号. a ≡ a%m  (mod m)    ← 读作"a 和 a%m 在模 m 下等价"
+模运算有一条基本性质：(a * b) % MOD = ((a % MOD) * (b % MOD)) % MOD
+a %MOD + b%MOD = (a+b)%MOD =（a%MOD +b）%MOD
+推导
+a = qm + a%m
+b = pm + b%m
+(a + b)%m = (qm + a%m + pm + b%m)%m = (a%m + b%m)%m
+a * b % m = (a * b)%m = (qm + a%m * p*m + b%m *q*m +a%m + b%m)%m = (a%m * b%m)%m 注意 a * b%m != a%m *b
+key：把%m看作是一个函数M(a), 其有性质 M(a) = qm + M(a) = M(M(a))，其中q为任意整数，m为模,是一个常数
+M(a + b) = M(qm + M(a) + pm + M(b))= M((q + p)m + M(a) + M(b)) = M(M(a) + M(b)) (因为M(a) = (q + p)m + M(a))
+同理可以推得M(M(a) * b) = M(M(M(a)) * M(b)) = M(M(a) * M(b))
+费马小定理:如果 p 是质数，a 不是 p 的倍数，那么：a^(p-1) ≡ 1 (mod p)  即 a^(p-1) 除以 p 的余数是 1.这里的(p-1)是a的(p-1)次方
+
+
+git 显示中文字符  git config --global core.quotepath false
+
+./bin/onnx_rgbt_rtdetr_test ./rknn_deploy/model/rtdetr_rgbt_baseline_640x640.onnx  ./rknn_deploy/test_img/rgb_test.jpg ./rknn_deploy/test_img/ir_test.jpg
+ ./bin/rknn_rgbt_rtdetr_test ./rknn_deploy/model/rtdetr_rgbt_baseline_640x640_fp16_242a15.rknn ./rknn_deploy/test_img/rgb_test.jpg  ./rknn_deploy/test_img/ir_test.jpg
+
+python .\deployment\export_hit_m2_scsp_onnx.py --config G:\bishe\object_track\Unaligned_RGBT_Tracking\PMATrack\experiments\hit_baseline\hit_small_ua_m2_scsp_v0.yaml --checkpoint  G:\bishe\object_track\Unaligned_RGBT_Tracking\PMATrack\output\hit_small_ua_m2_scsp_v0\checkpoints\train\hit_baseline\hit_small_ua_m2_scsp_v0\SharedHiTUnalignedV1_ep0145.pth.tar --output G:\bishe\object_track\Unaligned_RGBT_Tracking\PMATrack\output\hit_small_ua_m2_scsp_v0\hit_small_ua_m2_scsp_v0.onnx
+
+./bin/rknn_rgbt_hit_test rknn_deploy/model/hit_small_ua_m2_scsp_v0_rk3568_noquant.rknn  ./rknn_deploy/test_video/1boygo/
+./bin/onnx_rgbt_hit_test rknn_deploy/model/hit_small_ua_m2_scsp_v0.onnx  ./rknn_deploy/test_video/1boygo/
+
+python deployment/hit_rknn_accuracy_analysis.py \
+    --onnx output/hit_small_ua_m2_scsp_v0/hit_small_ua_m2_scsp_v0_safe_m2_hlfr_head_v2.onnx \
+    --input-dir deployment/hit_accuracy_inputs \
+    --output-dir output/hit_small_ua_m2_scsp_v0/hit_accuracy_analysis_safe_head_v2 \
+    --disable-rule fuse_bn_into_conv \
+    --simulator-only \
+    --clean-output
+python deployment/export_hit_rknn_safe_m2_hlfr_head_v2_hardswish_onnx.py `
+    --device cpu `
+    --entropy-eps 1e-4 `
+    --head-rescale 8192 `
+    --hardswish-blocks 1 `
+    --output output/hit_small_ua_m2_scsp_v0/hit_small_ua_m2_scsp_v0_safe_m2_hlfr_head_v2_hsw_b1.onnx
+	
+	
+	
+	
+adb kill-server
+taskkill /F /IM adb.exe 2>$null
+
+Get-Process adb -ErrorAction SilentlyContinue
+netstat -ano | findstr :5037
+
+
+不启动 VM，先检查 VirtualBox 眼里设备是什么状态
+& "E:\virtualbox\VBoxManage.exe" list usbhost
+现在直接手工 attach 给 ubun
+先确保 Ubuntu 虚拟机正在运行，然后 Windows PowerShell 执行：
+& "E:\virtualbox\VBoxManage.exe" list runningvms
+应该能看到：
+"ubun" {......}
+然后不要再去 Windows 执行 adb devices，直接：
+& "E:\virtualbox\VBoxManage.exe" controlvm "ubun" usbattach cbf8d0ec-3542-4071-b65a-459f81261ebd
+这个 UUID 就是你现在 Rockchip 的：
+a77a119e-7f9e-4e8a-91c2-a975cd0b0b2d
+VBoxManage controlvm <vm> usbattach <uuid> 本来就是 VirtualBox 官方用于把 Host USB 动态挂载到正在运行 VM 的命令
+lsusb | grep -i -E '2207|rockchip'
+adb kill-server
+sudo /home/ubun/tool/platform-tools/adb kill-server
+sudo /home/ubun/tool/platform-tools/adb start-server
+sudo /home/ubun/tool/platform-tools/adb devices -l
+同时看一下当前 USB 节点权限：
+ls -l /dev/bus/usb/001/011
+如果 sudo adb devices 能看到设备，而普通adb devices 看不到
+那就加 udev 规则
+sudo tee /etc/udev/rules.d/51-rockchip-adb.rules >/dev/null <<'EOF'
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0006", MODE="0666", GROUP="plugdev"
+EOF
+然后：为了让规则在以后重新插拔/重启后也稳定生效，我建议再补一次
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+重新让 USB 枚举一次，或者 VirtualBox detach/attach 一次，然后
+adb kill-server
+adb start-server
+adb devices -l
+
+
+USB 插入
+  ↓
+VM 的自动 filter 命中
+  ↓
+VirtualBox 尝试提前捕获
+  ↓
+捕获事务卡住
+  ↓
+Host 状态 = Held
+  ↓
+Guest 实际 attached = none
+  ↓
+手动 usbattach
+  ↓
+busy with a previous request

@@ -1,0 +1,948 @@
+conda activate nisqa
+python run_predict.py --mode predict_dir --pretrained_model weights/nisqa.tar --data_dir D:\huangkunhao\bishe\code\ULCnet\Windnet\trainers\model_output\WnetL\output --num_workers 0 --bs 10 --output_dir D:\huangkunhao\bishe\code\ULCnet\Windnet\trainers\model_output\WnetL
+python run_predict.py --mode predict_dir --pretrained_model weights/nisqa_mos_only.tar --data_dir D:\huangkunhao\bishe\code\ULCnet\Windnet\evaluation\model_output\WnetL\output --num_workers 0 --bs 10 --output_dir D:\huangkunhao\bishe\code\ULCnet\Windnet\evaluation\model_output\WnetL
+
+
+
+
+# 设置正确的 SSH 命令
+git config core.sshCommand "ssh -i G:/cangku/ssh_keys/github_keys/github_key"
+
+(base) (windnet-py3.13) PS D:\huangkunhao\bishe\code\ULCnet\Windnet> git config --get core.sshCommand
+ssh -i G:\cangku\ssh_keys\github_keys\github_key
+
+# 添加远程仓库（替换为您的实际仓库地址）
+git remote add origin git@github.com:hkunk/Windnet.git
+
+# 验证远程仓库设置
+git remote -v
+
+使用正确的 SSH 命令测试连接：ssh -i "G:\cangku\ssh_keys\github_keys\github_key" -T git@github.com
+
+
+
+生成默认的RSA密钥（推荐4096位）
+ssh-keygen -t rsa -b 4096 -C "2669441710@qq.com"
+在执行 git clone 的时候，通过 GIT_SSH_COMMAND 临时指定私钥
+GIT_SSH_COMMAND="ssh -i /root/.ssh/id_rsa_hkunh" git clone git@github.com:hkunh/Bimodal_HDetection.git
+进入仓库设置本地配置：
+cd Bimodal_HDetection
+git config core.sshCommand "ssh -i /root/.ssh/id_rsa_hkunh"
+将远程URL更改为SSH格式：
+git remote set-url origin git@github.com:hkunh/Windnet_base_Deepfilternet.git
+git pull origin master
+
+
+# 1. 创建 Conda 环境并指定 Python 3.13.5
+conda create -n o2rtdetr python=3.10
+conda create -n gtcrn python=3.10
+# 1. 初始化 Conda（这会修改您的 shell 配置）
+conda init bash
+
+# 2. 重新加载 shell 配置
+source ~/.bashrc
+# 2. 激活 Conda 环境
+conda activate windnet-env
+
+# 3. 进入项目目录
+cd ~/project/Windnet
+
+# 4. 安装 Poetry（如果在 Conda 环境中）
+pip install poetry
+pip install poetry -i https://mirrors.aliyun.com/pypi/simple/
+# 5. 配置 Poetry 使用项目内的虚拟环境（可选但推荐）
+poetry config virtualenvs.in-project true
+
+# 6. 安装项目依赖
+poetry install
+
+export PYTHONPATH=/root/project/Windnet:$PYTHONPATH
+poetry run python trainers/train_WindGan.py
+poetry run python trainers/train_WindGan_withGan.py
+poetry run python evaluation/test_WindGan.py 
+poetry run python trainers/train_WnetL.py
+poetry run python models/temp.py 
+sudo apt update && sudo apt install tmux
+tmux new -s training_session  # `-s` 给会话起个名字，例如 "training_session"
+Ctrl + b; d  分离当前会话 (Detach)
+tmux attach -t training_session
+Ctrl + b; [
+Page Up / Page Down​​：整页滚动（最常用）
+Esc 退出
+nvidia-smi
+
+tmux list-sessions
+
+
+conda create -n dfnet python=3.8
+conda activate dfnet
+# 进入项目根目录
+cd G:\bishe\code\DeepFilterNet\DeepFilterNet\DeepFilterNet
+
+
+临时使用 换源
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 编译所有组件（调试模式）
+# 更新包列表
+apt update
+apt install -y rustc cargo
+cargo build
+
+需要安装HDF5。可以使用：
+conda install -n dfnet hdf5  //注意：这里的dfnet是当前虚拟环境是dfnet
+conda install -n  base hdf5
+
+# 1. 设置 HDF5 相关环境变量
+# 确保这些环境变量已设置
+export HDF5_DIR=/opt/conda
+export PKG_CONFIG_PATH=/opt/conda/lib/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=/opt/conda/lib:$LD_LIBRARY_PATH
+
+# 验证 pkg-config 能找到 HDF5
+pkg-config --libs --cflags hdf5
+
+
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh #安装rust
+source ~/.cargo/env #生效
+# 安装 Python 开发依赖
+pip install maturin
+cd pyDF
+maturin develop
+
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple #换源
+conda install -c conda-forge poetry
+poetry install  #安装python包依赖
+pip install -r requirements.txt
+pip install -r requirements_eval.txt
+pip install -r requirements_dnsmos.txt
+export PYTHONPATH=$(pwd):$PYTHONPATH
+pip install -e .
+
+# CPU 版本（推荐大多数用户）
+pip install onnxruntime
+
+# GPU 版本（如果您有 NVIDIA GPU 并已配置 CUDA）
+pip install onnxruntime-gpu
+
+
+python df/Denoisenet_train.py
+50系列的cuda12.8必须使用python3.10！！！
+pip install torchcodec
+apt-get update
+apt-get install -y ffmpeg=7*
+
+
+cat /root/.ssh/id_ed25519.pub
+实际上，对于输入形状[1,2,3,4]，我们只能使用 normalized_shape 为以下之一：
+(4,) -> 对最后一个维度（宽度）进行归一化
+(3,4) -> 对最后两个维度（高度和宽度）进行归一化
+(2,3,4) -> 对最后三个维度（通道、高度和宽度）进行归一化
+
+
+
+B = 4  # 批大小示例
+A = torch.randn(B, 187, 24, 5)
+B = torch.randn(B, 187, 24, 5)
+
+# 沿着维度1（187）进行分组拼接
+# 结果形状为 [B, 187, 24, 10]
+grouped = torch.cat([A, B], dim=-1)
+
+# 验证：检查第0组的第一个元素
+group0 = grouped[:, 0, :, :]
+group1 = []
+for i in range(187)
+	group = group[:, i, :, :]
+	groupA = group[:, i, :, 0:5]
+	groupB = group[:, i, :, 5:10]
+	groupC = torch.cat([groupA, groupB], dim = 2)
+	group.append = (groupC.reshape(-1, groupC.size(2),groupC.size(3),groupC.size(4)))
+
+ #之后group1中的元素沿着维度0拼接起来
+ 
+ 
+ 
+ 小样本训练： train:100; val:5; test:20
+  小样本训练： train:1000; val:50; test:50
+ 
+ 一个LSTM单元（或层）的总参数量大约是 4 × [hidden_size × (hidden_size + input_size)]
+ 
+ SDR参考标准：
+10dB：优秀
+5-10dB：良好
+0-5dB：一般
+< 0dB：较差（增强后反而变差）
+STOI参考标准：
+0.75：优秀可懂度
+0.6-0.75：良好可懂度
+0.45-0.6：一般可懂度
+< 0.45：较差可懂度
+你的结果分析：
+
+Vorbis窗函数
+
+
+
+方法2：简化的能量守恒计算
+fn calculate_wnorm(window: &[f32], fft_size: usize, hop_size: usize) -> f32 {
+    // 计算窗口能量
+    let window_energy: f32 = window.iter().map(|w| w * w).sum();
+    
+    // 计算重叠因子
+    let overlap_factor = fft_size as f32 / hop_size as f32;
+    
+    // 正确的归一化因子计算
+    1.0 / (window_energy * overlap_factor).sqrt()
+}
+这两个在重叠率为50%下有什么区别吗
+
+
+        let mut window = match window_type {
+            "hann" => generate_hann_window(fft_size),
+            "hamming" => generate_hamming_window(fft_size),
+            "vorbis" => generate_vorbis_window(fft_size),
+            "blackman" => generate_blackman_window(fft_size),
+            _ => generate_vorbis_window(fft_size), // 默认使用vorbis窗
+        };
+		
+		
+# 设置HDF5的路径（根据您的conda环境路径调整）
+set HDF5_DIR=C:\Users\Admin\.conda\envs\dfnet\Library
+set PATH=%HDF5_DIR%\bin;%PATH%
+在PowerShell中设置环境变量的语法与CMD不同。在PowerShell中，您应该使用以下语法：
+$env:HDF5_DIR = "C:\Users\Admin\.conda\envs\dfnet\Library"
+$env:PATH = "$env:HDF5_DIR\bin;" + $env:PATH
+
+export HDF5_DIR=/root/miniconda/envs/dfnet
+方案1：使用 Cargo 工作区（推荐）
+首先检查根目录是否有 Cargo.toml工作区配置：
+# 查看根目录的 Cargo.toml
+cat Cargo.toml
+如果配置了工作区，可以一次性构建所有项目：
+# 在项目根目录构建所有 Rust 项目
+cargo build --release
+
+# 然后分别安装 Python 包
+cd py-DF
+maturin develop
+cd ../pyDF-data
+maturin develop
+
+
+maturin develop已经包含了 cargo build
+maturin develop的工作流程：
+自动调用 cargo build：maturin 内部会自动执行 cargo build
+构建 Rust 代码：编译你的 Rust 项目
+生成 Python 绑定：创建 Python 可导入的包
+安装到 Python 环境：将生成的包安装到 site-packages
+
+ git stash show ”stash@{0}“ -p
+
+
+目的：保持 Parseval 定理
+这种缩放确保了时域能量 = 频域能量
+
+https://github.com/MorenoLaQuatra/audioset-download.git
+
+
+all labels :
+Speech, Gush, Goat, Music, Smoke detector, smoke alarm, Gunshot, gunfire, Cap gun, Ping, Singing, Bang
+Sink (filling or washing), Water tap, faucet, Water, Blues, Country, Guitar, Acoustic guitar, Musical instrument, Strum, Plucked string instrument
+Bluegrass, Traditional music, Knock, Inside, small room, Train whistle, Rattle, Engine, Idling, Medium engine (mid frequency), Squeak
+Walk, footsteps, Liquid, Boiling, Vehicle, Air brake, Radio, Organ, Electronic organ, Boat, Water vehicle, Ship
+Ska, Clarinet, Horse, Neigh, whinny, Animal, Tender music, Splinter, Wood, Carnatic music, Ambulance (siren)
+Car alarm, Emergency vehicle, Siren, Female speech, woman speaking, Run, Timpani, Buzzer, Crackle, Flap, Clatter
+Folk music, Reversing beeps, Truck, Tabla, Drum, Percussion, Bass guitar, Roaring cats (lions, tigers), Camera, Yodeling
+Middle Eastern music, Soundtrack music, Sliding door, Exciting music, Chopping (food), Cat, Domestic animals, pets, Meow, Mandolin, Engine starting
+Heart murmur, Engine knocking, Lawn mower, Whale vocalization, Gong, Theme music, Drawer open or close, Electric toothbrush, Chink, clink, Pump (liquid)
+Techno, Ukulele, Inside, large room or hall, Motorboat, speedboat, Wind, Wind noise (microphone), Zipper (clothing), Humming, Dental drill, dentist's drill, Helicopter
+Television, Doorbell, Pink noise, Snoring, Car passing by, Sheep, Bleat, Computer keyboard, Jingle, tinkle, Shuffle
+Caterwaul, Cutlery, silverware, Dishes, pots, and pans, Cymbal, Drum kit, Hi-hat, Rimshot, Bass drum, Finger snapping, Filing (rasp)
+Rub, Female singing, Oink, Belly laugh, Steelpan, Opera, Creak, Bagpipes, Wind instrument, woodwind instrument, Scratching (performance technique)
+Drum and bass, Scratch, Choir, Male singing, Applause, Male speech, man speaking, Yell, Bicycle bell, Synthetic singing, Fart
+Video game music, Outside, rural or natural, Squish, White noise, Drum roll, Snare drum, Church bell, Bell, Scary music, Coin (dropping)
+Whimper (dog), Bee, wasp, etc., Insect, Fly, housefly, Fusillade, Motorcycle, Mains hum, Hum, Mouse, Tap
+Music of Bollywood, Thump, thud, Electronica, Background music, Hammer, Rain, Raindrop, Thunderstorm, Thunder, Rain on surface
+Singing bowl, Chainsaw, Power tool, Mantra, Crowd, Battle cry, Motor vehicle (road), Noise, Car, Toothbrush
+Drip, Clicking, Steam whistle, Thunk, Mechanical fan, Slosh, Outside, urban or manmade, Grunt, Sad music, Echo
+Keys jangling, Scrape, Funny music, Scissors, Croak, Frog, Beatboxing, Vocal music, Trickle, dribble, Growling
+Whack, thwack, Christmas music, Dance music, Toilet flush, Chop, Zing, Screaming, Cupboard open or close, Dog, Boing
+Rumble, Cowbell, Single-lens reflex camera, Child speech, kid speaking, Children playing, Chewing, mastication, Crack, Reverberation, Bird flight, flapping wings, Biting
+Crunch, Bow-wow, Funk, Gurgling, Inside, public space, Drill, Tools, Rapping, Bouncing, Bathtub (filling or washing)
+Fill (with liquid), Sewing machine, Zither, Pizzicato, Keyboard (musical), Piano, Harmonic, Ding, Music of Africa, Burping, eructation
+Baby cry, infant cry, Pant, Splash, splatter, Waterfall, Hair dryer, Pour, Tick-tock, Sizzle, Hands, Rock music
+Shout, Rock and roll, Independent music, Gasp, Electronic music, House music, Pulse, Music of Asia, Arrow, Crow
+Caw, Tambourine, Maraca, Baby laughter, Psychedelic rock, Railroad car, train wagon, Train horn, Rail transport, Train, Brass instrument
+Orchestra, Classical music, Trance music, Cacophony, Propeller, airscrew, Jet engine, Clock, Electric guitar, Electronic tuner, Accordion
+Tearing, Electronic dance music, Wail, moan, Machine gun, Sound effect, Patter, Air conditioning, Whip, Wind chime, Chime
+String section, Fire alarm, Bicycle, Laughter, Giggle, Vibration, Aircraft, Sneeze, Police car (siren), Telephone bell ringing
+A capella, Theremin, Stir, Frying (food), Fireworks, Sampler, Blender, Vibraphone, Breaking, Spray
+Rustling leaves, Foghorn, Grunge, Afrobeat, Marimba, xylophone, Glockenspiel, Mallet percussion, Whispering, Harmonica, Canidae, dogs, wolves
+Angry music, Environmental noise, Skidding, Tire squeal, Firecracker, Snake, Hiss, Rustle, Ratchet, pawl, Pulleys
+Mechanisms, Narration, monologue, Whistle, Shofar, Hammond organ, Electric shaver, electric razor, Ocean, Typewriter, Saxophone, Howl
+Sonar, Babbling, Chatter, Heavy metal, Printer, Telephone dialing, DTMF, Race car, auto racing, Flute, Eruption, Tubular bells
+Clang, Dial tone, Hip hop music, Chorus effect, Alarm clock, Accelerating, revving, vroom, Heavy engine (low frequency), Trumpet, Wood block, Sailboat, sailing ship
+Ice cream truck, ice cream van, Disco, Sine wave, Chirp tone, Jazz, Pop music, Ringtone, Beep, bleep, Sanding, Artillery fire
+Harp, Violin, fiddle, Bowed string instrument, Power windows, electric windows, Chuckle, chortle, Glass, Lullaby, Child singing, Clip-clop, Subway, metro, underground
+Pig, Hubbub, speech noise, speech babble, Rowboat, canoe, kayak, Livestock, farm animals, working animals, Light engine (high frequency), Cheering, Children shouting, Throat clearing, Crumpling, crinkling, Stomach rumble
+Tuning fork, French horn, Chant, Flamenco, Cough, Trombone, Mosquito, Ding-dong, Gospel music, Crushing
+Field recording, Roll, Bird, Bird vocalization, bird call, bird song, Chirp, tweet, Cricket, Plop, Purr, Slam, Song
+Fire, Bellow, Groan, Rattle (instrument), Sniff, Toot, Drum machine, Stream, Buzz, Wild animals
+Roar, Didgeridoo, Rhythm and blues, Whir, Static, Harpsichord, Hiccup, Train wheels squealing, Snicker, Typing
+Jingle (music), Music for children, Fowl, Crowing, cock-a-doodle-doo, Cluck, Chicken, rooster, Music of Latin America, Whoosh, swoosh, swish, Steam, Hoot
+Owl, Wedding music, Shuffling cards, Whimper, Vacuum cleaner, Civil defense siren, Busy signal, Speech synthesizer, Gargling, Clapping
+Sitar, Coo, Pigeon, dove, Heart sounds, heartbeat, Throbbing, Quack, Duck, Bark, Boom, Jingle bell
+Synthesizer, Cattle, bovinae, Moo, Traffic noise, roadway noise, Rodents, rats, mice, Ambient music, Effects unit, New-age music, Explosion, Burst, pop
+Tick, Squawk, Telephone, Bus, Cello, Double bass, Air horn, truck horn, Clickety-clack, Sawing, Writing
+Steel guitar, slide guitar, Fixed-wing aircraft, airplane, Wheeze, Change ringing (campanology), Whistling, Christian music, Punk rock, Door, Smash, crash, Microwave oven
+Aircraft engine, Salsa music, Progressive rock, Basketball bounce, Waves, surf, Tapping (guitar technique), Sigh, Yip, Slap, smack, Sidetone
+Jackhammer, Skateboard, Squeal, Snort, Swing music, Honk, Goose, Turkey, Gobble, Reggae
+Gears, Distortion, Soul music, Alarm, Crying, sobbing, Electric piano, Banjo, Conversation, Cash register, Breathing
+Happy music, Whoop, Silence, Shatter, Fire engine, fire truck (siren), Vehicle horn, car horn, honking, Dubstep
+possible wind labels :
+Wind
+Wind noise (microphone)
+Wind instrument, woodwind instrument
+Wind chime
+Power windows, electric windows
+
+进程已结束,退出代码0
+
+
+ 
+方式1 提取一个频率点上不同特征随着时间的变化关系
+方式2 提取一个特征上不同频率随着时间的变化关系
+方式3 提取不同特征，不同一频率下的时间关系   T， F_bins * F_band * C_complex 
+
+
+SRU_CUDA=0 CUDA_VISIBLE_DEVICES= python df/Denoisenet_train.py
+
+base) root@ab6893ab6056:~/project/Windnet_base_deepfilternet/Windnet_base_Deepfilternet/DeepFilterNet# pip show torch
+Name: torch
+Version: 2.9.1+cu128
+Summary: Tensors and Dynamic neural networks in Python with strong GPU acceleration
+Home-page: https://pytorch.org
+Author: 
+Author-email: PyTorch Team <packages@pytorch.org>
+License: BSD-3-Clause
+Location: /opt/conda/lib/python3.10/site-packages
+Requires: filelock, fsspec, jinja2, networkx, nvidia-cublas-cu12, nvidia-cuda-cupti-cu12, nvidia-cuda-nvrtc-cu12, nvidia-cuda-runtime-cu12, nvidia-cudnn-cu12, nvidia-cufft-cu12, nvidia-cufile-cu12, nvidia-curand-cu12, nvidia-cusolver-cu12, nvidia-cusparse-cu12, nvidia-cusparselt-cu12, nvidia-nccl-cu12, nvidia-nvjitlink-cu12, nvidia-nvshmem-cu12, nvidia-nvtx-cu12, sympy, triton, typing-extensions
+Required-by: ptflops, sru, torchaudio, torchvision
+(base) root@ab6893ab6056:~/project/Windnet_base_deepfilternet/Windnet_base_Deepfilternet/DeepFilterNet# 
+
+//conda install pytorch torchvision torchaudio pytorch-cuda -c pytorch -c nvidia
+//conda install pytorch torchvision torchaudio
+//conda install pytorch=2.9.1 torchvision=0.20.1 torchaudio=2.9.1 pytorch-cuda=12.1 -c pytorch -c nvidia -c conda-forge
+//conda install pytorch torchvision torchaudio pytorch-cuda=12.8 -c pytorch -c nvidia
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+Get-Command ninja | Format-List
+
+
+
+{
+    "test": [
+        ["Denoise_test_clean_no_reverb.hdf5", 16],
+        ["Denoise_test_noise.hdf5", 1]
+    ],
+    "train": [
+        ["Denoise_train_clean.hdf5", 1.4218],  #1.4218： 200小时， 
+        ["Denoise_train_noise.hdf5", 1],
+        ["Denoise_train_noise1.hdf5", 1]
+    ],
+    "valid": [
+        ["Denoise_val_clean.hdf5", 1.423],
+        ["Denoise_val_noise.hdf5", 1]
+    ]
+}
+
+
+
+
+aria2c -x 16 -s 16 -k 1M --max-tries=50 --retry-wait=10 -o "datasets_fullband.noise_fullband.audioset_004.tar.bz2" "https://dnschallengepublic.blob.core.windows.net/dns5archive/V5_training_dataset/noise_fullband/datasets_fullband.noise_fullband.audioset_004.tar.bz2"
+
+beyond compare
+
+aria2c -x 16 -s 16 -k 1M --max-tries=50 --retry-wait=10 -c -j 1 -o "clean_trainset_28spk_wav.zip (2.315Gb)"  "https://datashare.ed.ac.uk/bitstream/handle/10283/2791/clean_trainset_28spk_wav.zip?sequence=2&isAllowed=y"
+wget -c -O "clean_trainset_28spk_wav.zip" "https://datashare.ed.ac.uk/bitstream/handle/10283/2791/clean_trainset_28spk_wav.zip?sequence=2&isAllowed=y"
+aria2c -x 16 -s 16 -k 1M --max-tries=50 --retry-wait=10 -c -j 1 -o "V2_V3_Challenge_Combined_Blindset.zip"  "https://dnschallengepublic.blob.core.windows.net/dns3archive/V2_V3_Challenge_Combined_Blindset.zip"
+
+[0. , 	-inf, 	-inf, 	-inf, -inf, -inf, -inf, -inf, -inf, -inf]
+[0. , 	0. , 	-inf, 	-inf, -inf, -inf, -inf, -inf, -inf, -inf],
+[0. , 	0. , 	0., 	-inf, -inf, -inf, -inf, -inf, -inf, -inf],
+[0. , 	0. , 	0., 	0., -inf, -inf, -inf, -inf, -inf, -inf],
+[0. , 	0. , 	0., 	0., 0., -inf, -inf, -inf, -inf, -inf],
+[-inf, 	0. , 	0., 	0., 0., 0., -inf, -inf, -inf, -inf],
+[-inf, -inf, 	0., 	0., 0., 0., 0., -inf, -inf, -inf],
+[-inf, -inf, -inf, 		0., 0., 0., 0., 0., -inf, -inf],
+[-inf, -inf, -inf, 	-inf, 0., 0., 0., 0., 0., -inf],
+[-inf, -inf, -inf, 	-inf, -inf, 0., 0., 0., 0., 0.]])
+
+
+python -m tensorboard.main --logdir ./
+# 移除现有的远程仓库
+git remote remove origin
+
+# 添加新的远程仓库地址
+git remote add origin https://github.com/你的用户名/你的仓库名.git
+# 强制推送到新仓库（因为是空仓库）
+git push -u origin main --force
+# 或者
+git push -u origin main -f
+
+git config --global user.email "2669441710@qq.com"
+git config  user.email "2669441710@qq.com"
+git config --global user.name "KunhaoHuang"
+git config  user.name "KunhaoHuang"
+LAMP剪枝
+
+		
+# datasets 229G
+# +-- clean 204G
+# |   +-- emotional_speech 403M
+# |   +-- french_data 21G
+# |   +-- german_speech 66G
+# |   +-- italian_speech 14G
+# |   +-- mandarin_speech 21G
+# |   +-- read_speech 61G
+# |   +-- russian_speech 5.1G
+# |   +-- singing_voice 979M
+# |   \-- spanish_speech 17G
+# +-- dev_testset 211M
+# +-- impulse_responses 4.3G
+# |   +-- SLR26 2.1G
+# |   \-- SLR28 2.3G
+# \-- noise 20G
+
+
+
+pip install pyyaml
+没有gpu conda install pytorch torchvision torchaudio cpuonly -c pytorch
+pip install tensorboard
+pip install librosa
+pip install einops
+pip install mamba-ssm
+
+
+
+
+
+pip install torch torchvision torchaudio
+
+& "D:\huangkunhao\apps\anaconda3\python.exe" -m tensorboard.main --logdir=logs
+ python -m tensorboard.main --logdir=logs
+ 
+ 
+pip install pytorch-lightning
+pip install scipy
+pip install scipy pandas numpy pyyaml soundfile librosa tqdm torchmetrics
+pip install torchvision
+pip install torchaudio librosa soundfile transformers torchmetrics einops
+
+pip install espnet
+export HF_ENDPOINT=https://hf-mirror.com
+
+
+数据集,Baseline (原论文), 及格线 (改进有效),		优秀线 (论文/亮点级别),理由
+19LA,	0.08%,			0.10% - 0.15%,		< 0.10%,保持不退化就是胜利。
+21LA,	2.77%,			2.0% - 2.3%,		< 1.0%,这是原论文的“弱项”，非常有潜力超车。
+21DF,	1.43%,			1.2% - 1.3%,		< 1.0%,突破 1% 大关在学术上非常有说服力。
+ITW,	4.44%,			3.8% - 4.1%,		< 3.5%,最核心的泛化性指标，降 0.5% 就是巨大改进。
+
+模块设计,第一篇论文 (SLS 模型),第二篇论文 (MultiConv 模型)
+前端特征提取 (Backbone),XLS-R (提取 24 层隐藏特征),XLS-R (提取 24 层隐藏特征)
+特征融合层 (Neck),SLS (Sensitive Layer Select)：利用简单的全局平均池化 + 全连接层算出一个权重，然后对 24 层进行加权求和。,SwiGLU 门控机制：使用 Swish 门控线性单元进行动态自门控特征聚合。
+后端分类器 (Head),极简的全连接层 (FC) + SELU 激活函数。,"堆叠的 MultiConv (多核门控卷积)：包含 {3,7,11,15} 等多个维度的卷积核来捕捉局部和全局依赖。"
+时间轴压缩 (Pooling),粗暴的 Max Pooling (最大池化)。,复杂的 MHAP (多头注意力池化)：将特征分成多个头计算注意力权重。
+损失函数 (Loss),标准的二元交叉熵损失 (BCE / CE)。,交叉熵 (CE) + CKA 损失 (中心化核对齐)：强制不同卷积层学到不一样的特征。
+
+
+计算机视觉（Computer Vision）领域公认的“三大顶会”分别是 CVPR、ICCV 和 ECCV。它们的简称和全称如下：
+
+CVPR
+
+英文全称：IEEE/CVF Conference on Computer Vision and Pattern Recognition
+
+中文名称：国际计算机视觉与模式识别会议
+
+特点：每年举办一次。它是计算机视觉领域涵盖范围最广、收录论文最多、影响力极大的顶级学术会议。
+
+ICCV
+
+英文全称：IEEE/CVF International Conference on Computer Vision
+
+中文名称：国际计算机视觉大会
+
+特点：每两年举办一次（在奇数年举办）。它的录用标准非常严格，被公认为是计算机视觉领域最高级别的学术会议之一。
+
+ECCV
+
+英文全称：European Conference on Computer Vision
+
+中文名称：欧洲计算机视觉大会
+
+特点：每两年举办一次（在偶数年举办），正好与 ICCV 交替进行。它也是该领域极具权威性的顶级学术盛会。
+
+EUQkfqMmORxo
+
+1.都是使用什么数据集进行训练。
+
+2.都是在哪些数据集上进行对比，
+
+3.对比指标主要看哪些
+
+4.从这些看，目前sota的指标是哪个模型？指标最高是多少？
+
+# 将导出命令追加到 ~/.bashrc 文件末尾
+echo 'export HF_ENDPOINT="https://hf-mirror.com"' >> ~/.bashrc
+
+# 立即在当前终端生效（不需要重启终端）
+source ~/.bashrc
+
+
+
+pip install tensorboard
+
+nvidia-smi -L
+
+Gemini 说
+为你梳理和总结了我们讨论的所有硬核技术点。这个方案不仅能完美满足本科毕业设计的学术创新要求，其“算法+工程”的完整闭环也非常契合软件工程专业的落地属性，可以直接作为你未来求职简历上的“杀手锏”级全栈项目。
+
+你可以将毕业设计题目暂定为：《基于边云协同架构的桥梁多病害轻量化分割与动态监测系统》。
+
+以下是为你量身定制的完整路线图：
+
+核心资源盘点
+核心数据集：SegCODEBRIM（包含裂缝、剥落、露筋、风化等多类复杂桥梁病害，自带极强的背景干扰，适合做鲁棒性测试）。
+
+硬件平台：利用你手头强大的 RTX 4090 显卡作为云端训练和高精度推理机；使用 RK3588（或类似嵌入式板卡）作为边缘端模拟设备。
+
+第一阶段：边缘端“极简与极速”设计 (Edge AI)
+目标：在算力受限的无人机/巡检小车上，实现病害的实时初筛。
+
+Baseline 选择：SegFormer-B0（或参考 EfficientCrackNet 搭建纯卷积轻量网络）。
+
+优化策略：
+
+引入 GhostNetV2 模块或深度可分离卷积（DSC），进一步压缩参数量。
+
+在解码器端引入 EEM（边缘提取模块），增强对细小裂缝的敏感度。
+
+工程落地：
+
+将 PyTorch 模型导出为 ONNX 格式。
+
+使用 RKNN-Toolkit2 将模型转换为 INT8 定点化格式，部署到 RK3588，测试并记录真实的推理帧率（FPS）。
+
+阶段产出：一个极小参数量（<5M）、能在边缘板卡上达到 30+ FPS 的实时分割模型。
+
+第二阶段：云端“高精度与极限”优化 (Cloud AI)
+目标：处理边缘端搞不定的“疑难杂症”，生成极高精度的工程体检报告。
+
+Baseline 选择：Mask2Former（当前分割领域的精度天花板）。
+
+优化策略：
+
+充分利用 4090 的大显存，换用更强的 Backbone（如 Swin Transformer）。
+
+应对数据不平衡：SegCODEBRIM 中“露筋”等病害占比极小，引入 Focal Loss 或 OHEM（在线难样本挖掘）强制模型学习罕见病害。
+
+阶段产出：在 SegCODEBRIM 数据集上刷出极高的 mIoU 和 F1-Score，并生成完美的像素级病害对比图（用于写进论文）。
+
+第三阶段：边云协同分流策略 (系统集成与软件工程化)
+目标：将“散装”的两个模型整合为一个智能的工业软件系统。
+
+不确定性量化 (Uncertainty Estimation)：
+
+在边缘端（SegFormer-B0）的 Softmax 输出层后，加入信息熵计算或平均概率计算脚本。
+
+动态路由逻辑：
+
+低熵值（很确信）：直接在边缘端输出病害面积，结束流程。
+
+高熵值（模棱两可/遇到强树影干扰）：触发预警，将该帧图像进行无损压缩，通过网络回传至搭载 4090 的云端服务器。
+
+云端接收到图片后，调用 Mask2Former 进行高精度分割，并将结果下发合并至巡检报告。
+
+阶段产出：证明该策略能在损失极小精度的情况下，节省 70% 以上的上云带宽，展现出极强的工业价值。
+
+第四阶段（加分项/冲优）：动态变化检测 (Change Detection)
+目标：从“发现病害”升级到“预测病害寿命”。
+
+数据合成：利用 OpenCV 对 SegCODEBRIM 的部分图像进行人工修改（拉长裂缝、扩大剥落面积），合成 T 
+1
+​
+  和 T 
+2
+​
+  双时相数据集。
+
+孪生网络构建：设计一个简单的 Siamese 网络，输入两张图片，通过特征做差或拼接，输出病害扩大的增量 Mask。
+
+阶段产出：使系统具备“时序监测”能力，完善毕业设计的深度。
+
+B. 定位与定量的完美结合
+检测（Edge）：解决了“有无”和“位置”的问题。
+
+分割（Cloud）：解决了“严重程度”的问题。分割出的像素面积可以根据无人机的相对高度（相机内参）换算出真实的裂缝宽度和长度，这才是桥梁养护单位最核心的需求
+
+names: # 类别名称
+- 锈蚀                  # corroded (通常指钢筋生锈或金属构件腐蚀)
+- 混凝土劣化            # deteriorated concrete (指混凝土风化、剥落或破损)
+- 渗水                  # moisture (指表面潮湿、渗水或水迹)
+- 裂缝                  # cracks (常规裂缝)
+- 蜂窝                  # honeycombs (指混凝土浇筑不良表面形成的“蜂窝麻面”缺陷)
+- 收缩裂缝              # shrinkage cracks (因混凝土固化体积收缩而产生的裂纹)
+- 路面破损              # pavement degradation (指桥面铺装层或路面结构的劣化)
+- 收缩裂缝_基层         # shrinkage cracks_bass (注：这里的 "bass" 通常是 "base" 的拼写变体或特定数据集的简写，指代底层/基层的收缩裂缝)
+nc: 8                   # 类别总数 (number of classes): 8
+
+桥梁缺陷检测数据集（标价即售价，24小时内发货），6308张（存在增强处理），提供yolo和voc两种标注方式
+图像尺寸:1536*2048
+类别数量:8类
+训练集图像数量:5520; 验证集图像数量:525； 测试集图像数量:263
+类别名称: 每一类图像数 ，每一类标注数
+corroded - 腐蚀：3838, 22518
+deteriorated concrete - 混凝土劣化：2906, 6862
+moisture - 湿气：3902, 15058
+cracks - 裂缝：1412, 3089
+honeycombs - 蜂窝：2928, 7727
+shrinkage cracks - 收缩裂缝：122, 171
+pavement degradation - 道路退化：33, 77
+shrinkage cracks_bass - 收缩裂缝（基础）：3, 3
+image num: 6308
+
+
+watch -n 1 nvidia-smi
+ 
+EUQkfqMmORxo
+
+下面论文提出的模型中，有哪一篇适合作为我的局部放电检测的baseline的？要和transnext相当或者更优秀的模型。注意，不要给我推荐本身已经针对轻量化进行极致优化了
+要像transnext那样，本身有可能进行部署优化的空间
+
+3. DeepCrack
+如果你专注于**裂缝（Crack）**这一单一病害的像素级细化分割，这个数据集是必跑的。
+
+内容：包含 537 张图像，虽然规模较小，但标注极其精细（像素级 Mask）。
+
+特点：涵盖了不同光照和环境下的裂缝，是测试模型对细长拓扑结构提取能力的标杆。
+
+任务类型：二值语义分割。
+
+链接：GitHub - DeepCrack
+
+transforms:
+  ops:
+    - {type: RandomPhotometricDistort, p: 0.5} # 1. 颜色扭曲（50%概率改亮度、对比度）
+    - {type: RandomZoomOut, fill: 0}           # 2. 随机缩小（周围填黑边）
+    - {type: RandomIoUCrop, p: 0.8}            # 3. 随机裁剪（80%概率切掉一部分）
+    - {type: SanitizeBoundingBoxes, min_size: 1} # 4. 清理太小的废框
+    - {type: RandomHorizontalFlip}             # 5. 随机左右翻转
+    - {type: Resize, size: [640, 640], }       # 6. 统一拉伸到 640x640 尺寸
+    - {type: SanitizeBoundingBoxes, min_size: 1} # 7. 再清理一次废框
+    - {type: ConvertPILImage, dtype: 'float32'}  # 8. 变 Tensor
+    - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True} # 9. 坐标归一化
+	
+前端（机器人）：运行轻量化的目标检测模型（如这篇论文的UCRT-DETR），实时扫描，发现疑似裂缝就报警或标记位置。
+后端（工作站/云）：对前端标记出的关键区域图像，运行更精确但耗时的图像分割模型，进行深度分析，生成详细的检测报告
+
+下面这里为什么要提取裂纹像素？这个有什么用？另外，我如果设计一个系统，应该是这样的，通过目标检测找到有裂纹的电池片，然后送入到分割模型中提取像素。但是实际真的是这样做的吗？
+“老师，虽然我们在 PVEL-AD 数据集上训练时，输入的是单片电池（Cell）的图像。但在真实的工业现场，相机拍下的是包含 60 片电池的电池板（Panel）4K 高清大图。
+如果直接对这 4K 大图跑语义分割，显存会爆，推理速度会降到几秒一帧，完全无法满足流水线实时要求。
+因此，我设计的两阶段架构（RT-DETR + 分割），在未来的实际部署中是这样运作的：
+先用 RT-DETR 快速扫描整张 4K 电池板大图（检测级）。模型会迅速框出这 60 片电池中，哪几片的哪个具体位置有疑似裂纹。
+系统从 4K 原图中，仅把 RT-DETR 框出的缺陷小区域（比如 $100\times100$ 像素）原画质裁剪下来。
+把这几个极小的高清切片送给轻量级分割网络（分割级），提取裂纹的像素级轮廓。
+这套逻辑在 PVEL-AD 单片图像的验证上同样适用。即使在单片电池中，裂纹也只占极小比例。RT-DETR 先框出裂纹区域，再进行局部裁切分割，能够有效过滤电池片上的主栅线、多晶硅杂质背景，
+从而大幅提高最终的 mIoU 精度并降低计算延迟。”
+UCF-EL
+
+2. 你的“故事线”可以这样串联你可以把 PVEL-AD 和 UCF-EL 的关系讲成一个**从“普查”到“精检”**的完整链路：第一步：全局定位（Panel $\rightarrow$ Cells）利用你提到的 cell_cropping 脚本，
+将一整块大组件切成 72 个单片。这是物理层面的预处理。第二步：快速粗筛（Detection - 使用 PVEL-AD 逻辑）利用 PVEL-AD 训练出来的检测模型（比如 YOLOv11），
+对这 72 片进行快速扫描。输入： 单片电池图片。任务： 判断“是否有缺陷”以及“属于哪一类”。结果： 标记出有问题的片子，生成 Bounding Box。第三步：精细量化（Segmentation - 使用 UCF-EL 逻辑）
+只针对第二步中“被标记为有缺陷”的区域，调用 UCF-EL 训练的分割模型。输入： 被检测模型选中的局部区域。
+任务： 像素级抠图。最终价值： 计算缺陷面积占比。比如：“该片存在断栅，受损面积 15%，建议降级使用”。
+
+
+1. 图像采集与数字切割（数字化）流水线上的近红外相机拍下的是一整块大面板（包含72片电池片）的超高清 EL 图像。
+软件拿到这张超大图后，会利用传统的图像处理算法（如边缘提取、网格线识别）找到电池片之间的缝隙，然后在内存中将这张大图“划网格”，切分成 $6 \times 12$（即72张）的小图片矩阵（Tensors）。
+2. 身份绑定（解决“对应哪一片”的问题）在切割的同时，系统会为这72张小图生成携带物理绝对坐标的唯一 ID。假设这块太阳能大板扫码得到的批次号是 PNL-2026-A1。
+那么切出来的第 3 行、第 5 列的电池片，在内存中的代号就会被标记为 PNL-2026-A1_R3_C5。这个 ID 会作为元数据（Metadata）一直绑定在这张图片的内存对象上。
+无论它在软件里被传给哪个深度学习模型，最终都能精准溯源到物理面板的具体位置。
+3. 内存截取与模型接力（如何“转”到分割）这就是“级联架构”发挥作用的核心环节：初筛队列： 这 72 张带着“身份证”的小图，被批量送入目标检测模型（如 YOLO）。
+结果拦截： 检测模型全速跑完，输出结果。假设系统发现除了 R3_C5 和 R6_C1 输出了含有缺陷的边界框（Bounding Box）外，其余 70 片全都是正常的。
+内存复制（Crop）： 核心调度程序（通常是 C++ 或 Python 后台）会拿到这两个缺陷框的坐标。
+它会直接从内存中，把 R3_C5 和 R6_C1 这两张图片对应区域的像素矩阵**复制（Crop）**出来，放进一个叫做“疑似缺陷池”的内存队列里。
+激活分割： 语义分割模型被唤醒。它从“疑似缺陷池”中取出这两个局部像素矩阵进行高精度的像素级推理，计算出具体的受损面积，并将结果与它们的 ID 记录进最终的质检数据库。
+
+
+模式 A：边缘-中心分离架构（最省成本、最主流）
+边缘端（机台旁）： 摄像头上方挂着一个便宜的 NVIDIA Jetson 盒子。它里面跑着 YOLO。它一边疯狂吞吐流水线传来的照片，一边把正常的图片直接丢弃。
+
+局域网传输： 一旦 YOLO 框出了缺陷（比如 72 片里抓出了 2 片），它就把这 2 片的**局部小图（Crop）**通过工厂千兆局域网发给中心机房。
+
+中心端（机房里）： 机房里有一台插着几张 RTX 4090 的服务器。它接收到各个流水线发来的“嫌疑图”，用 分割模型 慢慢且精准地计算受损面积，最后把质检报告存入数据库。
+
+我的识别目标里，为腐蚀、 裂缝、 断栅缺陷、 互连缺陷。其中有比较大的腐蚀和裂缝，也有细小的裂缝，断栅contact。还有Interconnect (互连缺陷)。
+其中断栅是竖条矩形，就是高度比较长，但是相对宽度也比较狭窄。
+互连缺陷是横条矩形，就是宽度长，高度狭窄。
+注意因为我的图像是电致发光图像，所有缺陷的地方都会比周围黑。
+我发下我的电致发光图像的光伏电池缺陷检测中，很多缺陷都是比较黑色的，而背景是白色的？就是与周围的对比度不一样，能不能做些什么改进，增强模型对于对比度的识别能力？
+我该如何查看下面底层算子的有关论文呢？注意不是要你帮我找下面的算子的来源论文，是扩展，我应该如何才能看到更多不一样的底层算子，和底层方法
+关注底层算子：不要只看大框架（如 RT-DETR），多去看基础算子（如 sort, gather, fft, wavelet）。越底层的改动，论文的价值（Contribution）越高。
+
+
+Fourier Neural Operators
+我想要做目标检测方向的，我现在在寻找可行的小方向，下面论文有哪些是可能存在目标检测数据集的
+
+nvidia-smi -L
+
+Atlas 200I DK A2
+
+
+. HRSID (High-Resolution SAR Images Dataset)
+数据集简介：这是一个高分辨率 SAR 船舶检测数据集，包含 5,604 张图像切片和 16,951 个船舶实例。图像来源于 Sentinel-1 和 TerraSAR-X 卫星，分辨率在 1m 到 5m 之间，涵盖了近海和远海等多种复杂场景。
+
+官方/常用下载链接：
+
+GitHub (推荐): https://github.com/chaozhong2014/HRSID（这是原作者维护的地址，包含数据集说明和下载指引）
+
+2. SAR-Ship-Dataset
+数据集简介：该数据集规模较大，包含由 102 幅高分三号（Gaofen-3）和 108 幅 Sentinel-1 图像切分出的 43,819 个船舶切片。分辨率跨度从 3m 到 25m，支持多种极化模式，是测试模型在多传感器、多分辨率下泛化能力的理想选择。
+
+官方/常用下载链接：
+
+GitHub: https://github.com/neofisher/SAR-Ship-Dataset
+
+官方发布页面 (一般通过官网或学术平台): 该数据集通常由中国科学院大学（UCAS）相关团队维护。
+
+tensorboard --logdir . --port 6006 
+
+SIVED
+总计：1,044 张图像切片（patches），共 12,013 个车辆目标。
+训练集：837 张图像，9,561 个车辆目标。
+验证集：104 张图像，1,222 个车辆目标。
+测试集：103 张图像，1,230 个车辆目标
+
+Dataset Polarization # Images # Ships Img. Dim. Resolution (m)
+HRSID HH, HV, VV 5,604 16,951 800×800 0.5, 1, 3
+RSDD HH, HV, VV, VH 7,000 10,263 512×512 Various
+SSDD HH, HV, VV, VH 1,160 2,551 500×500 1–15
+
+UAVDT
+skyfusion
+
+下面的论文是如何做实验的？使用什么数据集？选取的什么baseline?如何做对比实验的？
+
+Start-Process -FilePath "python" -ArgumentList "-X utf8 .\train.py" -RedirectStandardOutput ".\train_log.txt" -RedirectStandardError ".\train_error.txt" -WindowStyle Hidden
+
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Select-Object ProcessId, CommandLine
+
+Stop-Process -Id 8856 -Force
+
+CAGTDet     Information Fusion  这个是不是水刊有争议 国人发文区
+CALNet       ACM International Conference on Multimedia（ACM 国际多媒体会议）----这个是水会吧？？
+C2Former  TRANSACTIONS ON GEOSCIENCE AND REMOTE SENSING 有争议 国人发文区
+CAANet    TRANSACTIONS ON INDUSTRIAL INFORMATICS 国人发文区，但是评论说投稿难度大
+M2FNet    International Journal of Applied EarthObservation and Geoinformation  SCI期刊推荐，顶刊中水刊?  水平框
+
+
+lusrmgr.msc
+Start-Service sshd
+你只需要在机器 A 的 PowerShell 里，运行下面这行命令，把旧的“身份证”记录删掉即可
+ssh-keygen -R 192.168.137.22
+
+1. 添加新的环境查找路径
+在 SSH 窗口中运行：
+PowerShell
+conda config --add envs_dirs D:\conda\envs
+2. 添加新的包（缓存）路径（可选，建议也改了）
+Conda 下载的安装包默认也在 C 盘，建议一并改到 D 盘：
+PowerShell
+conda config --add pkgs_dirs D:\conda\pkgs
+3. 正常创建环境
+现在你可以像以前一样直接用名字创建了，它会优先安装在 D 盘：
+PowerShell
+conda create -n com python=3.10
+pip install --force-reinstall "setuptools<70.0.0"
+确保配置文件存在（如果没有会自动创建一个）：
+if (!(Test-Path -Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force }
+将 Git 路径追加到配置文件末尾：
+Add-Content -Path $PROFILE -Value '$env:Path += ";D:\my\apps\Git\cmd"'
+
+5090
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+取消架构欺骗限制 我们不需要再伪装成 9.0 了，让编译器自己去检测你的 5090
+unset TORCH_CUDA_ARCH_LIST
+让你的 Conda 环境拥有独立编译 CUDA 代码的能力：
+conda install -c nvidia cuda-nvcc=12.4 -y
+验证编译器是否就绪
+nvcc --version
+先手动安装包含 pkg_resources 的工具包
+pip install --upgrade setuptools==69.5.1 wheel ninja
+原生 12.0 源码编译 MMCV
+pip install mmcv==2.2.0 --no-binary mmcv --no-build-isolation --no-cache-dir
+mim install "mmdet>=3.0.0"
+mim install "mmrotate==1.0.0rc1"
+# 再次放开 mmdet 的版本拦截（一步到位）
+sed -i 's/mmcv_maximum_version = .*/mmcv_maximum_version = "2.3.0"/' /root/miniconda3/envs/o2rtdetr/lib/python3.10/site-packages/mmdet/__init__.py
+# 重新将项目以开发模式安装（让项目自带的算子也用 12.0 重新编译）
+pip install -v -e .
+CUDA_VISIBLE_DEVICES=1 python tools/train.py /home/hsh/project/O2-RT-DETR/projects/MSI_srtdetr/configs/MSI_srtdetr_r18vd_1xb4_72e_MODA_vi_linux.py
+CUDA_VISIBLE_DEVICES=1 python tools/train.py /home/hsh/project/O2-RT-DETR/projects/MSI_srtdetr/configs/MSI_srtdetr_r18vd_1xb4_72e_MODA_vi_linux.py --resume
+CUDA_VISIBLE_DEVICES=1 python tools/train.py /home/hsh/project/O2-RT-DETR/projects/dualmodal_rrtdetr/configs/o2_rtdetr_r50vd_1xb4_72e_DroneVehicle_rgb.py
+python tools/test.py \
+    /home/hsh/project/O2-RT-DETR/projects/dualmodal_rrtdetr/configs/dualmodal_rrtdetr_r18vd_1xb4_72e_DroneVehicle_vi_linux_dmcbf_t1.py \
+    /home/hsh/project/O2-RT-DETR/work_dirs/dualmodal_rrtdetr_r18vd_1xb4_72e_DroneVehicle_vi_linux_dmcbf_t1/best_dota_mAP_epoch_68.pth
+fuser -k -9 /dev/nvidia1
+
+4090
+pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+pip install "opencv-python<4.10"
+pip install "numpy<2"
+mim install "mmcv==2.1.0"
+
+python tools/train.py D:\my\project\O2-RT-DETR\projects\MSI_srtdetr\configs\MSI_srtdetr_r50vd_1xb4_72e_DroneVehicle_vi_win.py
+python tools/test.py D:\my\project\O2-RT-DETR\projects\dualmodal_rrtdetr\configs\dualmodal_rrtdetr_r18vd_DroneVehicle_vi_win_wbf_v2.py D:\my\project\O2-RT-DETR\work_dirs\dualmodal_rrtdetr_r18vd_DroneVehicle_vi_win_wbf_v2\best_dota_mAP_epoch_70.pth
+    
+    
+
+git checkout -b SignalModal
+git push -u origin  SignalModal
+
+tensorboard --logdir  .  --port 6007
+
+mamba_det_test 
+conda create --name o2rtdetr_mamba --clone mamba_det_test
+pip install causal-conv1d>=1.4.0 --no-build-isolation -v
+❯ 🐱 pip uninstall causal-conv1d -y
+Found existing installation: causal_conv1d 1.6.2.post1
+Uninstalling causal_conv1d-1.6.2.post1:
+  Successfully uninstalled causal_conv1d-1.6.2.post1
+  
+  
+ extract_feat -> forward_transformer -> bbox_head.forward
+ 
+ forward_transformer:
+                  img_feats & batch_data_samples
+                               |
+                               V
+                      +-----------------+
+                      | pre_transformer |
+                      +-----------------+
+                          |          |
+                          |          V
+                          |    +-----------------+
+                          |    | forward_encoder |
+                          |    +-----------------+
+                          |             |
+                          |             V
+                          |     +---------------+
+                          |     |  pre_decoder  |
+                          |     +---------------+
+                          |         |       |
+                          V         V       |
+                      +-----------------+   |
+                      | forward_decoder |   |
+                      +-----------------+   |
+                                |           |
+                                V           V
+                               head_inputs_dict
+							   
+通过网络直接把 Node.js 官方稳定版（LTS）的 .msi 安装包下载到你当前目录					   
+Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi" -OutFile "node_install.msi"
+系统会在后台悄悄把 Node.js 装好（会自动把 npx 和 node 的环境变量加上，不需要任何弹窗下一步）：
+Start-Process msiexec.exe -ArgumentList "/i node_install.msi /qn /norestart" -Wait
+临时安装包删掉：rm node_install.msi
+
+
+打开你本地的 VS Code。
+按快捷键 Ctrl + Shift + P（Mac 上是 Cmd + Shift + P）唤出全局命令面板。
+在里面输入：Remote-SSH: Kill VS Code Server on Host... 并回车。
+在弹出的列表中，选择 “学校显卡电脑”。
+此时 VS Code 会自动尝试去结束那台电脑上的卡死进程并清理缓存。完成后，你再次尝试重新连接即可。
+
+它会强行去 Windows 系统的注册表里，把刚装好的 Node.js 路径生拉硬拽到你当前的 SSH 会话里：
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+Windows 下全新安装 Node.js 的一个通病：因为是刚刚装好的纯净环境，你之前从没运行过任何包管理命令，系统还没来得及在你的用户目录下自动创建 npm 这个用于存放全局缓存的文件夹
+mkdir C:\Users\Admin\AppData\Roaming\npm
+
+
+cmd.exe /c "C:\Users\Admin\.vscode\agent-plugins\github.com\jnMetaCode\superpowers-zh\hooks\run-hook.cmd" session-start
+
+taskkill /F /IM python.exe /T
+
+推荐插件： Markdown All in One
+在 VS Code 插件市场搜索并安装Markdown All in One
+
+Windows/Linux: Shift + Alt + F 对齐代码表格线
+
+Restart-Service sshd
+
+ssh-keygen -R 192.168.137.22
+ssh admin@192.168.137.22
+
+等下，我之前的实验中，fpn和pan使用CSPlayer，我的两个模态就是单纯相加，就是效果最好的。我现在就是怀疑，因为CSPlayer太重了，导致怎么融合都没有。所以现在设计这个P2，如果
+
+进入机器B后：
+New-Item -ItemType Directory -Force (Split-Path $PROFILE)
+Set-Content -Path $PROFILE -Value '. D:\my\init_conda.ps1'
+
+ssh-keygen -t rsa -b 4096 -C "2669441710@qq.com"
+git config --global user.email "2669441710@qq.com"
+git config --global user.name "KunhaoHuang"
+
+删除静态arp:  arp -d 192.168.X.X
+
+远程 C 的 VS Code 终端里启动 TensorBoard：tensorboard --logdir . --host 127.0.0.1 --port 6008
+在 本地 A 的 PowerShell 执行：  保持这个窗口不要关。含义是：A 本地 16008 端口 → C 远程 127.0.0.1:6008
+ssh -N -L 16008:127.0.0.1:6008 用户名@192.168.137.22
+然后浏览器打开： http://127.0.0.1:16008/
+
+为验证所提出模块在 RT-DETRv2 检测框架中的有效性，本文首先采用 RT-DETRv2 常用的固定方形输入设置，将 RGB 与红外图像统一调整为 640×640，
+并在该设置下构建 RT-DETRv2-R50vd strong baseline。所有消融实验均采用相同的输入尺寸、训练轮数、优化器、数据增强和测试流程，
+因此可以公平反映 TSA、DMCFE_v2 和 LAQR 等模块相对于同一基线模型的性能贡献。
+
+考虑到 RGBTDronePerson 数据集原始图像分辨率为 640×512，且已有 RGBTDronePerson 方法通常采用 640×512 输入协议进行训练与评估，
+本文进一步在 640×512 keep-ratio 设置下训练并评估 baseline 与最终模型。该实验主要用于与现有方法进行协议对齐的性能比较，
+而 640×640 设置下的实验主要用于分析各模块在 RT-DETRv2 strong baseline 上的相对增益。
+
+此外，为分析输入尺寸对模型性能的影响，本文分别在 640×640 和 640×512 keep-ratio 两种输入设置下比较 baseline 与最终模型。实验结果表明，不同输入尺寸会影响模型的绝对检测精度，
+但本文方法在相同输入协议下相对于对应 baseline 仍保持性能优势。
+因此，本文后续消融分析主要关注同一设置下的相对增益，而与现有方法比较时采用 640×512 协议对齐结果
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+对于hit环境配置：
+pip install jpeg4py
+pip install pycocotools
+pip install tensorboard tensorboardX -i https://pypi.tuna.tsinghua.edu.cn/simple 
+pip install pandas scipy -i https://pypi.tuna.tsinghua.edu.cn/simple 
+pip install lmdb -i https://pypi.tuna.tsinghua.edu.cn/simple 
+pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install timm -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install easydict -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
+powershell查看内存占用
+Get-CimInstance Win32_OperatingSystem | Select-Object `
+    @{Name="Total(GB)"; Expression={[math]::round($_.TotalVisibleMemorySize/1MB, 2)}}, `
+    @{Name="Used(GB)";  Expression={[math]::round(($_.TotalVisibleMemorySize - $_.FreePhysicalMemory)/1MB, 2)}}, `
+    @{Name="Free(GB)";  Expression={[math]::round($_.FreePhysicalMemory/1MB, 2)}}, `
+    @{Name="Usage(%)";  Expression={[math]::round((($_.TotalVisibleMemorySize - $_.FreePhysicalMemory)/$_.TotalVisibleMemorySize)*100, 1)}}
+	 
+	
+bcdedit /set hypervisorlaunchtype off  关闭windows  Hyper-V
+bcdedit /set hypervisorlaunchtype auto 开启windows  Hyper-V
+
+
+
+
+
+
